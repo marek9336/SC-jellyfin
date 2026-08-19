@@ -20,7 +20,7 @@ buffering, plné převíjení, transkódování.
 1. V Jellyfinu: **Dashboard → Pluginy → Repozitáře → Přidat**
    a vlož URL manifestu:
    ```
-   https://raw.githubusercontent.com/<TVUJ-UCET>/SC-jellyfin/main/manifest.json
+   https://raw.githubusercontent.com/marek9336/SC-jellyfin/main/manifest.json
    ```
 2. **Katalog** → nainstaluj „Stream Cinema" → restartuj Jellyfin.
 3. **Dashboard → Pluginy → Stream Cinema** → záložka **Nastavení**:

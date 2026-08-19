@@ -28,7 +28,7 @@ proto je to MVP a čeká se doladění po prvním běhu.
 |---|---|
 | Pracovní složka (syncuje Nextcloud) | `…\Nextcloud\IT\AI\Claude\SC-jellyfin\` |
 | Na tomto notebooku | `C:\Users\marek.bor\Nextcloud\IT\AI\Claude\SC-jellyfin\` |
-| GitHub | `https://github.com/<TVUJ-UCET>/SC-jellyfin` *(po pushnutí — doplnit)* |
+| GitHub | `https://github.com/marek9336/SC-jellyfin` (**private** repo) |
 | Sestavený plugin (sideload) | `SC-jellyfin\artifacts\streamcinema_0.1.0.0.zip` *(build výstup, není v gitu)* |
 
 > ⚠️ **Sync mezi stroji:** složka je v Nextcloudu, takže se syncuje sama — ALE `.git/`
@@ -58,7 +58,7 @@ dotnet --version   # očekává se 9.0.x
 **Získání kódu** (preferuj git; složka v Nextcloudu je záložní):
 
 ```bash
-git clone https://github.com/<TVUJ-UCET>/SC-jellyfin.git
+git clone https://github.com/marek9336/SC-jellyfin.git
 cd SC-jellyfin
 ```
 
@@ -90,7 +90,7 @@ cd "C:\Users\marek.bor\Nextcloud\IT\AI\Claude\SC-jellyfin"
 
 # 1) na GitHubu vytvoř PRÁZDNÝ repo SC-jellyfin (bez README/gitignore)
 # 2) propojit a pushnout:
-git remote add origin https://github.com/<TVUJ-UCET>/SC-jellyfin.git
+git remote add origin https://github.com/marek9336/SC-jellyfin.git
 git push -u origin main
 
 # 3) vydání verze → GitHub Actions vyrobí release + manifest.json:
@@ -98,8 +98,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Po pushnutí nahraď `<TVUJ-UCET>` v [README.md](README.md) (instalační URL manifestu)
-a v §2 tohoto dokumentu.
+✅ Účet `marek9336` je už doplněn v [README.md](README.md) (URL manifestu) i v §2.
 
 ---
 
@@ -116,7 +115,7 @@ a v §2 tohoto dokumentu.
 
 **Cesta B — přes plugin repozitář (auto-instalace/update):**
 1. **Dashboard → Pluginy → Repozitáře → Přidat**, URL:
-   `https://raw.githubusercontent.com/<TVUJ-UCET>/SC-jellyfin/main/manifest.json`
+   `https://raw.githubusercontent.com/marek9336/SC-jellyfin/main/manifest.json`
    *(manifest vznikne až po pushnutí tagu `v*`, viz §4)*
 2. Katalog → nainstaluj „Stream Cinema" → restart.
 
