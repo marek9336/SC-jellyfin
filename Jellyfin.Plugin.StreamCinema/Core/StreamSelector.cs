@@ -156,7 +156,7 @@ public static class StreamSelector
     private static int LangScore(StreamOption s, StreamSelectorOptions o)
     {
         // linfo položky normalizovat: lowercase, bez "+tit" (titulková stopa)
-        var langs = s.Languages.Count > 0
+        IEnumerable<string> langs = s.Languages.Count > 0
             ? s.Languages
             : (s.Language ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries);
 
