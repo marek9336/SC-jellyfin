@@ -19,5 +19,7 @@ Thumbs.db
 *.local.json
 secrets.*
 
-# Repo je soukromé použití — bez veřejné vizitky (lokální kopie zůstává)
+# Interní dokumentace jen lokálně (syncuje Nextcloud, na public git nepatří)
 README.md
+HANDOFF.md
+NOTES.md
