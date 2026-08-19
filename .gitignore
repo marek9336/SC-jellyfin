@@ -1,0 +1,20 @@
+# Build
+bin/
+obj/
+publish/
+artifacts/
+*.user
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# NIKDY necommitovat lokální konfiguraci s údaji
+*.local.json
+secrets.*

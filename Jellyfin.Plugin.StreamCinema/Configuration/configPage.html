@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <title>Stream Cinema</title>
+</head>
+<body>
+<div id="ScConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+     data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+
+            <div class="verticalSection">
+                <h1>Stream Cinema</h1>
+                <div style="display:flex; gap:.5em; margin-bottom:1.5em;">
+                    <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabSearch">🔍 Hledání</button>
+                    <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabQueue">⬇️ Fronta</button>
+                    <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabSettings">⚙️ Nastavení</button>
+                </div>
+            </div>
+
+            <!-- ═══════════ HLEDÁNÍ ═══════════ -->
+            <div id="scTabSearch" class="sc-tab verticalSection">
+                <div id="scTokenWarning" class="hide" style="background:#5c1f1f; padding:1em; border-radius:4px; margin-bottom:1em;">
+                    <strong>Chybí X-AUTH-TOKEN katalogu.</strong><br>
+                    Jdi do Nastavení a buď klikni na „Načíst token z kra.sk", nebo token zadej ručně
+                    (kra.sk → Úložiště → soubor <code>sc.json</code> → otevři a zkopíruj 32 znaků).
+                </div>
+
+                <div style="display:flex; gap:.5em; align-items:flex-end; flex-wrap:wrap;">
+                    <div class="inputContainer" style="flex:1; min-width:200px; margin-bottom:0;">
+                        <input is="emby-input" type="text" id="scSearchQuery" label="Hledat film / seriál" />
+                    </div>
+                    <div class="selectContainer" style="width:130px; margin-bottom:0;">
+                        <select is="emby-select" id="scSearchType" label="Typ">
+                            <option value="movies">Filmy</option>
+                            <option value="series">Seriály</option>
+                        </select>
+                    </div>
+                    <button is="emby-button" type="button" id="scSearchBtn" class="raised button-submit" style="margin-bottom:.2em;">
+                        <span>Hledat</span>
+                    </button>
+                </div>
+
+                <div id="scBreadcrumb" style="margin:.75em 0;" class="hide">
+                    <button is="emby-button" type="button" id="scBackBtn" class="raised" style="padding:.3em .8em;"><span>← Zpět</span></button>
+                    <span id="scBreadcrumbText" style="margin-left:.75em; opacity:.75;"></span>
+                </div>
+
+                <div id="scResults" style="margin-top:1em;"></div>
+
+                <!-- Výběr streamu -->
+                <div id="scStreamPicker" class="hide" style="margin-top:1em; background:#202020; padding:1em; border-radius:4px;">
+                    <h3 id="scStreamPickerTitle" style="margin-top:0;"></h3>
+                    <div id="scStreamList"></div>
+                    <button is="emby-button" type="button" id="scStreamCancel" class="raised" style="margin-top:.75em;"><span>Zavřít</span></button>
+                </div>
+            </div>
+
+            <!-- ═══════════ FRONTA ═══════════ -->
+            <div id="scTabQueue" class="sc-tab verticalSection hide">
+                <div id="scStatusBar" style="background:#202020; padding:1em; border-radius:4px; margin-bottom:1em;">
+                    <div id="scStatusText" style="margin-bottom:.5em;">Načítám stav…</div>
+                    <div id="scStatusProgressWrap" class="hide" style="background:#333; border-radius:3px; height:8px; overflow:hidden;">
+                        <div id="scStatusProgress" style="background:#00a4dc; height:100%; width:0;"></div>
+                    </div>
+                    <div id="scStatusDetail" style="margin-top:.5em; font-size:.9em; opacity:.75;"></div>
+                    <button is="emby-button" type="button" id="scPauseBtn" class="raised" style="margin-top:.75em;"><span>⏸ Pozastavit</span></button>
+                </div>
+                <div id="scQueueList"></div>
+            </div>
+
+            <!-- ═══════════ NASTAVENÍ ═══════════ -->
+            <div id="scTabSettings" class="sc-tab verticalSection hide">
+                <form id="scConfigForm">
+                    <h2>kra.sk účet</h2>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="cfgKraskaUsername" label="Uživatelské jméno" autocomplete="off" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="password" id="cfgKraskaPassword" label="Heslo" autocomplete="new-password" />
+                        <div class="fieldDescription">Ukládá se do konfigurace Jellyfinu na serveru (plaintext XML) — nikam jinam se neposílá.</div>
+                    </div>
+                    <button is="emby-button" type="button" id="scTestLoginBtn" class="raised"><span>Otestovat přihlášení</span></button>
+                    <span id="scTestLoginResult" style="margin-left:.75em;"></span>
+
+                    <h2 style="margin-top:1.5em;">Katalog (X-AUTH-TOKEN)</h2>
+                    <div class="fieldDescription" style="margin-bottom:.75em;">
+                        Token katalogu se schvaluje ručně na serveru Stream Cinema — plugin ho proto
+                        <strong>nikdy negeneruje</strong>. Buď se načte automaticky ze zálohy
+                        <code>sc.json</code> na tvém kra.sk úložišti (vytvořil ji Kodi addon),
+                        nebo ho zadej ručně: přihlas se na kra.sk → Úložiště → stáhni
+                        <code>sc.json</code> → otevři v poznámkovém bloku → zkopíruj 32 znaků sem.
+                    </div>
+                    <button is="emby-button" type="button" id="scBootstrapBtn" class="raised"><span>Načíst token z kra.sk (sc.json)</span></button>
+                    <span id="scBootstrapResult" style="margin-left:.75em;"></span>
+                    <div class="inputContainer" style="margin-top:.75em;">
+                        <input is="emby-input" type="text" id="cfgManualAuthToken" label="Ruční token (32 znaků, má přednost)" autocomplete="off" />
+                    </div>
+
+                    <h2 style="margin-top:1.5em;">Cílové složky (cesty uvnitř Jellyfin kontejneru)</h2>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="cfgMoviesPath" label="Složka pro filmy" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="cfgSeriesPath" label="Složka pro seriály" />
+                    </div>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" id="cfgTriggerLibraryScan" />
+                        <span>Po dokončení stahování spustit sken knihovny</span>
+                    </label>
+
+                    <h2 style="margin-top:1.5em;">Chování stahování (anti-ban)</h2>
+                    <div class="fieldDescription" style="margin-bottom:.75em;">
+                        Stahuje se vždy jen jeden soubor najednou. Výchozí hodnoty jsou zvolené tak,
+                        aby provoz vypadal jako běžné sledování — měň je s rozmyslem.
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgPauseMinMinutes" label="Pauza mezi soubory — minimum (minuty)" min="0" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgPauseMaxMinutes" label="Pauza mezi soubory — maximum (minuty)" min="0" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgSpeedLimitMbps" label="Limit rychlosti (Mbit/s, 0 = bez limitu)" min="0" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgDailyCapGb" label="Denní strop (GB, 0 = vypnuto)" min="0" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgMinFreeSpaceGb" label="Minimální volné místo (GB)" min="0" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgWindowFromHour" label="Stahovat od (hodina 0–23; od==do znamená vždy)" min="0" max="23" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgWindowToHour" label="Stahovat do (hodina 0–23)" min="0" max="23" />
+                    </div>
+
+                    <h2 style="margin-top:1.5em;">Pokročilé</h2>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="cfgUserAgent" label="User-Agent katalogu" />
+                        <div class="fieldDescription">Musí vypadat jako Kodi klient. V případě potíží zkopíruj přesnou hodnotu z Kodi logu.</div>
+                    </div>
+
+                    <br>
+                    <button is="emby-button" type="submit" class="raised button-submit block"><span>Uložit nastavení</span></button>
+                </form>
+            </div>
+
+        </div>
+    </div>
+
+    <script type="text/javascript">
+    (function () {
+        'use strict';
+
+        var pluginId = 'd7c4b2a1-3f5e-4b8c-9a76-0e1f2d3c4b5a';
+        var page = document.querySelector('#ScConfigPage');
+        var browseStack = [];   // breadcrumb: [{path, params, label, seriesTitle}]
+        var queueTimer = null;
+
+        // ── Pomocné ──────────────────────────────────────────────
+
+        function api(method, route, body) {
+            return ApiClient.ajax({
+                type: method,
+                url: ApiClient.getUrl('Plugins/StreamCinema/' + route),
+                data: body ? JSON.stringify(body) : undefined,
+                contentType: 'application/json',
+                dataType: 'json'
+            });
+        }
+
+        function el(id) { return page.querySelector('#' + id); }
+
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        function fmtBytes(b) {
+            if (!b) return '0 B';
+            var u = ['B', 'KB', 'MB', 'GB', 'TB'], i = Math.floor(Math.log(b) / Math.log(1024));
+            return (b / Math.pow(1024, i)).toFixed(i >= 3 ? 1 : 0) + ' ' + u[i];
+        }
+
+        function showTab(tabId) {
+            page.querySelectorAll('.sc-tab').forEach(function (t) { t.classList.add('hide'); });
+            el(tabId).classList.remove('hide');
+            if (tabId === 'scTabQueue') { refreshQueue(); startQueueTimer(); }
+            else { stopQueueTimer(); }
+        }
+
+        function startQueueTimer() {
+            stopQueueTimer();
+            queueTimer = setInterval(refreshQueue, 5000);
+        }
+
+        function stopQueueTimer() {
+            if (queueTimer) { clearInterval(queueTimer); queueTimer = null; }
+        }
+
+        // ── Katalog: defenzivní parsování menu-driven odpovědí ──
+
+        function itemTitle(item) {
+            try {
+                if (item.i18n_info) {
+                    var langs = ['cs', 'sk', 'en'];
+                    for (var i = 0; i < langs.length; i++) {
+                        var li = item.i18n_info[langs[i]];
+                        if (li && li.title) return li.title;
+                    }
+                }
+            } catch (e) { }
+            if (item.info && item.info.title) return item.info.title;
+            if (item.title) return item.title;
+            return item.url || '?';
+        }
+
+        function itemYear(item) {
+            var y = (item.info && (item.info.year || item.info.aired)) || item.year;
+            if (typeof y === 'string') y = parseInt(y.substring(0, 4), 10);
+            return (y && y > 1900) ? y : null;
+        }
+
+        function findMenuItems(data) {
+            if (Array.isArray(data.menu)) return data.menu;
+            // fallback: první pole objektů s `url`
+            for (var k in data) {
+                if (Array.isArray(data[k]) && data[k].length && typeof data[k][0] === 'object' && data[k][0] && data[k][0].url) {
+                    return data[k];
+                }
+            }
+            return [];
+        }
+
+        function renderResults(data, seriesTitle) {
+            var container = el('scResults');
+            el('scStreamPicker').classList.add('hide');
+
+            if (data && data.error === 'missing_token') {
+                el('scTokenWarning').classList.remove('hide');
+                container.innerHTML = '';
+                return;
+            }
+            el('scTokenWarning').classList.add('hide');
+
+            if (data && data.error) {
+                container.innerHTML = '<p style="color:#e57373;">Chyba: ' + esc(data.error) + '</p>';
+                return;
+            }
+
+            var items = findMenuItems(data || {});
+            if (!items.length) {
+                container.innerHTML = '<p>Žádné výsledky.</p>';
+                return;
+            }
+
+            var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
+            items.forEach(function (item, idx) {
+                if (!item || !item.url) return;
+                var title = itemTitle(item);
+                var year = itemYear(item);
+                var isPlay = String(item.url).indexOf('/Play/') === 0;
+                html += '<div class="sc-item" data-idx="' + idx + '" style="background:#252525; padding:.6em .9em; border-radius:4px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">'
+                    + '<span>' + esc(title) + (year ? ' <span style="opacity:.6;">(' + year + ')</span>' : '') + '</span>'
+                    + '<span style="opacity:.5;">' + (isPlay ? '▶ streamy' : '📁') + '</span>'
+                    + '</div>';
+            });
+            html += '</div>';
+            container.innerHTML = html;
+
+            container.querySelectorAll('.sc-item').forEach(function (elItem) {
+                elItem.addEventListener('click', function () {
+                    var item = items[parseInt(elItem.getAttribute('data-idx'), 10)];
+                    onItemClick(item, seriesTitle);
+                });
+            });
+        }
+
+        function updateBreadcrumb() {
+            var bc = el('scBreadcrumb');
+            if (browseStack.length > 1) {
+                bc.classList.remove('hide');
+                el('scBreadcrumbText').textContent = browseStack.map(function (b) { return b.label; }).join(' › ');
+            } else {
+                bc.classList.add('hide');
+            }
+        }
+
+        function browseTo(path, params, label, seriesTitle, push) {
+            if (push !== false) {
+                browseStack.push({ path: path, params: params, label: label, seriesTitle: seriesTitle });
+            }
+            updateBreadcrumb();
+            el('scResults').innerHTML = '<p>Načítám…</p>';
+            api('POST', 'Browse', { Path: path, Params: params || null }).then(function (data) {
+                renderResults(data, seriesTitle);
+            }, function () {
+                el('scResults').innerHTML = '<p style="color:#e57373;">Požadavek selhal.</p>';
+            });
+        }
+
+        function onItemClick(item, seriesTitle) {
+            var url = String(item.url);
+            var title = itemTitle(item);
+
+            if (url.indexOf('/Play/') === 0) {
+                openStreamPicker(item, seriesTitle);
+            } else {
+                // O úroveň hlouběji; když jdeme do seriálu, zapamatuj si jeho název
+                var nextSeries = seriesTitle;
+                var mt = (item.info && item.info.mediatype) || item.type;
+                if (mt === 'tvshow' || !nextSeries) nextSeries = title;
+                browseTo(url, null, title, nextSeries, true);
+            }
+        }
+
+        // ── Výběr streamu a fronta ───────────────────────────────
+
+        function parsePlayUrl(url) {
+            // /Play/{id} | /Play/{id}/{season}/{episode}
+            var m = String(url).match(/^\/Play\/([^\/]+)(?:\/(\d+)\/(\d+))?$/);
+            return {
+                isEpisode: !!(m && m[2] !== undefined),
+                season: m && m[2] ? parseInt(m[2], 10) : null,
+                episode: m && m[3] ? parseInt(m[3], 10) : null
+            };
+        }
+
+        function openStreamPicker(item, seriesTitle) {
+            var picker = el('scStreamPicker');
+            var title = itemTitle(item);
+            var year = itemYear(item);
+            var playInfo = parsePlayUrl(item.url);
+
+            el('scStreamPickerTitle').textContent = title + (year ? ' (' + year + ')' : '');
+            el('scStreamList').innerHTML = '<p>Načítám streamy…</p>';
+            picker.classList.remove('hide');
+            picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            api('POST', 'Streams', { Path: item.url, Params: null }).then(function (data) {
+                if (data.error || !data.streams || !data.streams.length) {
+                    el('scStreamList').innerHTML = '<p style="color:#e57373;">' + esc(data.error || 'Žádné streamy k dispozici.') + '</p>';
+                    return;
+                }
+
+                var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
+                data.streams.forEach(function (s, i) {
+                    html += '<div style="background:#2c2c2c; padding:.5em .8em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em;">'
+                        + '<span><strong>' + esc(s.language || '?') + '</strong> · ' + esc(s.quality || '?') + ' · ' + esc(s.sizeText || '?')
+                        + ' <span style="opacity:.6;">' + esc((s.videoInfo || '') + (s.audioInfo || '')) + '</span>'
+                        + (s.subsUrl ? ' · 💬 titulky' : '') + '</span>'
+                        + '<button is="emby-button" type="button" class="raised button-submit sc-add-btn" data-i="' + i + '" style="padding:.3em .9em;"><span>Stáhnout</span></button>'
+                        + '</div>';
+                });
+                html += '</div>';
+                el('scStreamList').innerHTML = html;
+
+                el('scStreamList').querySelectorAll('.sc-add-btn').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                        var s = data.streams[parseInt(btn.getAttribute('data-i'), 10)];
+                        var body = {
+                            Ident: s.ident,
+                            Title: title,
+                            Year: year,
+                            MediaType: playInfo.isEpisode ? 'episode' : 'movie',
+                            SeriesTitle: playInfo.isEpisode ? (seriesTitle || title) : null,
+                            Season: playInfo.season,
+                            Episode: playInfo.episode,
+                            SubsUrl: s.subsUrl || null,
+                            SubsLang: null,
+                            Quality: s.quality,
+                            Language: s.language,
+                            SizeText: s.sizeText
+                        };
+                        api('POST', 'Queue', body).then(function () {
+                            btn.querySelector('span').textContent = '✓ Ve frontě';
+                            btn.disabled = true;
+                        }, function () {
+                            Dashboard.alert('Přidání do fronty selhalo.');
+                        });
+                    });
+                });
+            });
+        }
+
+        // ── Fronta / stav ────────────────────────────────────────
+
+        function refreshQueue() {
+            api('GET', 'Status').then(function (s) {
+                var text, detail = [];
+                if (s.currentItemTitle) {
+                    var pct = s.currentBytesTotal > 0 ? Math.round(100 * s.currentBytesDone / s.currentBytesTotal) : 0;
+                    text = '⬇️ Stahuji: <strong>' + esc(s.currentItemTitle) + '</strong> — ' + pct + ' % ('
+                        + fmtBytes(s.currentBytesDone) + ' / ' + fmtBytes(s.currentBytesTotal) + ', '
+                        + fmtBytes(s.currentSpeedBps) + '/s)';
+                    el('scStatusProgressWrap').classList.remove('hide');
+                    el('scStatusProgress').style.width = pct + '%';
+                } else {
+                    text = s.paused ? '⏸ Worker pozastaven' : (esc(s.lastMessage || 'Nečinný'));
+                    el('scStatusProgressWrap').classList.add('hide');
+                }
+
+                if (s.dailyBytes) detail.push('Dnes staženo: ' + fmtBytes(s.dailyBytes));
+                if (s.freeSpaceBytes) detail.push('Volné místo: ' + fmtBytes(s.freeSpaceBytes));
+                if (s.kraskaDaysLeft != null) detail.push('kra.sk předplatné: ' + s.kraskaDaysLeft + ' dní');
+                if (s.nextActionUtc) detail.push('Další akce: ' + new Date(s.nextActionUtc).toLocaleTimeString());
+
+                el('scStatusText').innerHTML = text;
+                el('scStatusDetail').textContent = detail.join(' · ');
+                el('scPauseBtn').querySelector('span').textContent = s.paused ? '▶ Obnovit' : '⏸ Pozastavit';
+                el('scPauseBtn').setAttribute('data-paused', s.paused ? '1' : '0');
+            });
+
+            api('GET', 'Queue').then(function (data) {
+                var items = data.items || [];
+                if (!items.length) {
+                    el('scQueueList').innerHTML = '<p>Fronta je prázdná. Přidej něco přes záložku Hledání.</p>';
+                    return;
+                }
+
+                // Enumy chodí z API jako čísla (System.Text.Json default) — normalizuj na názvy
+                var statusNames = ['Queued', 'Downloading', 'Done', 'Error', 'Skipped'];
+                function normStatus(s) { return typeof s === 'number' ? (statusNames[s] || String(s)) : s; }
+                function isEpisode(i) { return i.mediaType === 'Episode' || i.mediaType === 1; }
+
+                var stMap = {
+                    Queued: ['🕐 Ve frontě', '#888'],
+                    Downloading: ['⬇️ Stahuje se', '#00a4dc'],
+                    Done: ['✅ Hotovo', '#4caf50'],
+                    Error: ['❌ Chyba', '#e57373'],
+                    Skipped: ['⤼ Přeskočeno', '#888']
+                };
+
+                var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
+                items.forEach(function (i) {
+                    var stKey = normStatus(i.status);
+                    var st = stMap[stKey] || [stKey, '#888'];
+                    var name = isEpisode(i)
+                        ? (i.seriesTitle || i.title) + ' S' + String(i.season || 0).padStart(2, '0') + 'E' + String(i.episode || 0).padStart(2, '0')
+                        : i.title + (i.year ? ' (' + i.year + ')' : '');
+                    html += '<div style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
+                        + '<span>' + esc(name) + ' <span style="opacity:.6;">' + esc(i.quality || '') + ' ' + esc(i.sizeText || '') + '</span><br>'
+                        + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span>'
+                        + '<span style="display:flex; gap:.4em;">'
+                        + (stKey === 'Error' ? '<button is="emby-button" type="button" class="raised sc-retry" data-id="' + i.id + '" style="padding:.2em .7em;"><span>↻ Znovu</span></button>' : '')
+                        + (stKey !== 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-remove" data-id="' + i.id + '" style="padding:.2em .7em;"><span>🗑</span></button>' : '')
+                        + '</span></div>';
+                });
+                html += '</div>';
+                el('scQueueList').innerHTML = html;
+
+                el('scQueueList').querySelectorAll('.sc-remove').forEach(function (b) {
+                    b.addEventListener('click', function () {
+                        api('DELETE', 'Queue/' + b.getAttribute('data-id')).then(refreshQueue);
+                    });
+                });
+                el('scQueueList').querySelectorAll('.sc-retry').forEach(function (b) {
+                    b.addEventListener('click', function () {
+                        api('POST', 'Queue/' + b.getAttribute('data-id') + '/Retry').then(refreshQueue);
+                    });
+                });
+            });
+        }
+
+        // ── Konfigurace ──────────────────────────────────────────
+
+        var cfgFields = [
+            'KraskaUsername', 'KraskaPassword', 'ManualAuthToken', 'MoviesPath', 'SeriesPath',
+            'PauseMinMinutes', 'PauseMaxMinutes', 'SpeedLimitMbps', 'DailyCapGb',
+            'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent'
+        ];
+
+        function loadConfig() {
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                cfgFields.forEach(function (f) {
+                    var input = el('cfg' + f);
+                    if (input) input.value = config[f] != null ? config[f] : '';
+                });
+                el('cfgTriggerLibraryScan').checked = !!config.TriggerLibraryScan;
+            });
+        }
+
+        function saveConfig(e) {
+            e.preventDefault();
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                cfgFields.forEach(function (f) {
+                    var input = el('cfg' + f);
+                    if (!input) return;
+                    config[f] = input.type === 'number' ? parseInt(input.value || '0', 10) : input.value;
+                });
+                config.TriggerLibraryScan = el('cfgTriggerLibraryScan').checked;
+                ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                });
+            });
+            return false;
+        }
+
+        // ── Události ─────────────────────────────────────────────
+
+        page.addEventListener('pageshow', function () {
+            loadConfig();
+            showTab('scTabSearch');
+            api('GET', 'Status').then(function (s) {
+                if (!s.hasToken) el('scTokenWarning').classList.remove('hide');
+            });
+        });
+
+        page.addEventListener('pagehide', stopQueueTimer);
+
+        page.querySelectorAll('.sc-tab-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () { showTab(btn.getAttribute('data-tab')); });
+        });
+
+        el('scConfigForm').addEventListener('submit', saveConfig);
+
+        el('scSearchBtn').addEventListener('click', function () {
+            var q = el('scSearchQuery').value.trim();
+            if (!q) return;
+            var type = el('scSearchType').value;
+            browseStack = [{ label: 'Hledání: ' + q }];
+            updateBreadcrumb();
+            el('scResults').innerHTML = '<p>Hledám…</p>';
+            api('POST', 'Search', { Query: q, Type: type }).then(function (data) {
+                renderResults(data, null);
+            }, function () {
+                el('scResults').innerHTML = '<p style="color:#e57373;">Hledání selhalo.</p>';
+            });
+        });
+
+        el('scSearchQuery').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); el('scSearchBtn').click(); }
+        });
+
+        el('scBackBtn').addEventListener('click', function () {
+            if (browseStack.length <= 1) return;
+            browseStack.pop();
+            var prev = browseStack[browseStack.length - 1];
+            if (prev.path) {
+                browseTo(prev.path, prev.params, prev.label, prev.seriesTitle, false);
+            } else {
+                el('scSearchBtn').click();
+            }
+        });
+
+        el('scStreamCancel').addEventListener('click', function () {
+            el('scStreamPicker').classList.add('hide');
+        });
+
+        el('scPauseBtn').addEventListener('click', function () {
+            var paused = el('scPauseBtn').getAttribute('data-paused') === '1';
+            api('POST', 'Worker/' + (paused ? 'resume' : 'pause')).then(refreshQueue);
+        });
+
+        el('scTestLoginBtn').addEventListener('click', function () {
+            el('scTestLoginResult').textContent = '…';
+            api('POST', 'TestLogin').then(function (r) {
+                el('scTestLoginResult').textContent = (r.success ? '✅ ' : '❌ ') + r.message;
+            }, function () {
+                el('scTestLoginResult').textContent = '❌ Požadavek selhal (ulož nejdřív nastavení).';
+            });
+        });
+
+        el('scBootstrapBtn').addEventListener('click', function () {
+            el('scBootstrapResult').textContent = '…';
+            api('POST', 'BootstrapToken').then(function (r) {
+                el('scBootstrapResult').textContent = (r.success ? '✅ ' : '❌ ') + r.message;
+            }, function () {
+                el('scBootstrapResult').textContent = '❌ Požadavek selhal (ulož nejdřív nastavení).';
+            });
+        });
+    })();
+    </script>
+</div>
+</body>
+</html>

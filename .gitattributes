@@ -1,0 +1,7 @@
+# Normalizace konců řádků — zdroják LF, ať se build chová stejně na Linux CI i Windows
+* text=auto eol=lf
+
+# Binární soubory beze změny
+*.zip binary
+*.dll binary
+*.png binary

@@ -1,0 +1,122 @@
+using System.Text.Json.Serialization;
+
+namespace Jellyfin.Plugin.StreamCinema.Core;
+
+/// <summary>Stav položky ve frontě stahování.</summary>
+public enum QueueItemStatus
+{
+    Queued,
+    Downloading,
+    Done,
+    Error,
+    Skipped
+}
+
+/// <summary>Typ média — určuje cílovou složku.</summary>
+public enum ScMediaType
+{
+    Movie,
+    Episode
+}
+
+/// <summary>Jedna položka fronty stahování. Serializuje se do JSON stavového souboru.</summary>
+public class QueueItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>Název filmu / seriálu (bez roku).</summary>
+    public string Title { get; set; } = string.Empty;
+
+    public int? Year { get; set; }
+
+    public ScMediaType MediaType { get; set; } = ScMediaType.Movie;
+
+    /// <summary>Jen pro epizody.</summary>
+    public string? SeriesTitle { get; set; }
+
+    public int? Season { get; set; }
+
+    public int? Episode { get; set; }
+
+    /// <summary>kra.sk ident vybraného streamu.</summary>
+    public string Ident { get; set; } = string.Empty;
+
+    /// <summary>URL titulků z katalogu (ident je část za /file/), volitelné.</summary>
+    public string? SubsUrl { get; set; }
+
+    /// <summary>Jazyk titulků (pro pojmenování .srt), default cs.</summary>
+    public string? SubsLang { get; set; }
+
+    // Popisné údaje streamu — jen pro zobrazení ve frontě.
+    public string? Quality { get; set; }
+    public string? Language { get; set; }
+    public string? SizeText { get; set; }
+
+    public QueueItemStatus Status { get; set; } = QueueItemStatus.Queued;
+
+    public string? ErrorMessage { get; set; }
+
+    public DateTime AddedUtc { get; set; } = DateTime.UtcNow;
+
+    public DateTime? CompletedUtc { get; set; }
+
+    public long BytesTotal { get; set; }
+
+    public long BytesDone { get; set; }
+
+    /// <summary>Výsledná cesta po dokončení.</summary>
+    public string? TargetPath { get; set; }
+
+    /// <summary>Počet neúspěšných pokusů (pro automatický retry s odstupem).</summary>
+    public int FailCount { get; set; }
+}
+
+/// <summary>Jeden stream z pole `strms` odpovědi /Play.</summary>
+public class StreamOption
+{
+    public int Index { get; set; }
+    public string Ident { get; set; } = string.Empty;
+    public string? Provider { get; set; }
+    public string? Language { get; set; }
+    public string? Quality { get; set; }
+    public string? SizeText { get; set; }
+    public string? VideoInfo { get; set; }
+    public string? AudioInfo { get; set; }
+    public string? SubsUrl { get; set; }
+}
+
+/// <summary>Info o kra.sk účtu.</summary>
+public class KraskaUserInfo
+{
+    public int DaysLeft { get; set; }
+    public string? SubscribedUntil { get; set; }
+}
+
+/// <summary>Persistentní stav pluginu (fronta + denní počítadlo). Jeden JSON soubor.</summary>
+public class PluginState
+{
+    public List<QueueItem> Items { get; set; } = new();
+
+    /// <summary>Datum (UTC, yyyy-MM-dd), ke kterému platí DailyBytes.</summary>
+    public string? DailyDate { get; set; }
+
+    public long DailyBytes { get; set; }
+
+    public bool WorkerPaused { get; set; }
+}
+
+/// <summary>Snapshot pro /status endpoint.</summary>
+public class WorkerStatus
+{
+    public bool Paused { get; set; }
+    public string? CurrentItemTitle { get; set; }
+    public Guid? CurrentItemId { get; set; }
+    public long CurrentBytesDone { get; set; }
+    public long CurrentBytesTotal { get; set; }
+    public long CurrentSpeedBps { get; set; }
+    public DateTime? NextActionUtc { get; set; }
+    public string? LastMessage { get; set; }
+    public long DailyBytes { get; set; }
+    public long FreeSpaceBytes { get; set; }
+    public int? KraskaDaysLeft { get; set; }
+}
