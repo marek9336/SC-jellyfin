@@ -216,6 +216,10 @@ public sealed class ScCatalog
         using var doc = await GetAsync(streamUrl, null, ct).ConfigureAwait(false);
         var root = doc.RootElement;
 
+        // DIAGNOSTIKA: celá odpověď /ws2 — abychom viděli, co je ve `vN` a zda tam
+        // není přímý odkaz / jiná pole (helper SC je šifrovaný, tudy zjišťujeme tvar).
+        _log($"sc: resolve /ws2 odpověď: {root.GetRawText()}");
+
         var version = GetString(root, "version");
         if (string.IsNullOrEmpty(version))
         {

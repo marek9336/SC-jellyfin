@@ -121,7 +121,11 @@ public sealed class KraskaClient
                 }
             }
 
-            _log($"kra: resolve selhal (pokus {attempt + 1}), invaliduji session");
+            // DIAGNOSTIKA: proč kra.sk resolve odmítl (celá odpověď — ident je stream,
+            // ne heslo; heslo se neloguje nikde). Klíč k tomu, zda `vN:` ident potřebuje
+            // jiný tvar / endpoint / helper.
+            LastError = DescribeError(data, "resolve bez odkazu");
+            _log($"kra: resolve selhal (pokus {attempt + 1}) — {LastError}; odpověď: {(data?.GetRawText() ?? "null")}");
             InvalidateSession();
         }
 
