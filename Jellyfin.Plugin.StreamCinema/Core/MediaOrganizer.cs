@@ -5,7 +5,8 @@ namespace Jellyfin.Plugin.StreamCinema.Core;
 /// <summary>
 /// Skládá cílové cesty podle Jellyfin konvencí pojmenování.
 /// Filmy:   <MoviesPath>/Nazev (rok)/Nazev (rok) - [kvalita jazyk].mkv
-/// Seriály: <SeriesPath>/Nazev (rok)/Season 01/Nazev (rok) - S01E03 - [kvalita jazyk].mkv
+/// Seriály: <SeriesPath>/Nazev/Season 01/Nazev (rok) - S01E03 - [kvalita jazyk].mkv
+/// (složka seriálu bez roku — přání uživatele)
 /// </summary>
 public static class MediaOrganizer
 {
@@ -51,11 +52,14 @@ public static class MediaOrganizer
 
         if (item.MediaType == ScMediaType.Episode)
         {
-            var series = Sanitize(FormatTitle(CleanTitle(item.SeriesTitle ?? item.Title), item.Year));
+            // Složka seriálu BEZ roku (přání uživatele), název souboru s rokem
+            var cleanSeries = CleanTitle(item.SeriesTitle ?? item.Title);
+            var seriesDir = Sanitize(cleanSeries);
+            var seriesFile = Sanitize(FormatTitle(cleanSeries, item.Year));
             var season = item.Season ?? 1;
             var episode = item.Episode ?? 1;
-            var file = $"{series} - S{season:D2}E{episode:D2}{tag}{extension}";
-            return Path.Combine(seriesPath, series, $"Season {season:D2}", Sanitize(file));
+            var file = $"{seriesFile} - S{season:D2}E{episode:D2}{tag}{extension}";
+            return Path.Combine(seriesPath, seriesDir, $"Season {season:D2}", Sanitize(file));
         }
 
         var movie = Sanitize(FormatTitle(CleanTitle(item.Title), item.Year));

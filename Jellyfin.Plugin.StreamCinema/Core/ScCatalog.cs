@@ -101,8 +101,19 @@ public sealed class ScCatalog
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         ApplyHeaders(req);
 
-        _log($"sc: GET {path}");
+        _log($"sc: GET {basePath}");
         using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            // Diagnostika: SC vrací 5xx i pro odmítnuté requesty — tělo odpovědi
+            // je klíč k příčině. UUID v query maskovat, tokeny v query nejsou.
+            var errBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var snippet = errBody.Length > 300 ? errBody[..300] : errBody;
+            var safeQs = string.IsNullOrEmpty(Uuid) ? qs : qs.Replace(Uuid, "***", StringComparison.Ordinal);
+            _log($"sc: HTTP {(int)resp.StatusCode} GET {basePath}?{safeQs} — tělo: {snippet}");
+        }
+
         resp.EnsureSuccessStatusCode();
         var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         return JsonDocument.Parse(text);
