@@ -20,9 +20,23 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         Instance = this;
 
         // Stabilní UUID zařízení — generuje se jen jednou (anti-ban: jedna identita)
+        var dirty = false;
         if (string.IsNullOrEmpty(Configuration.DeviceUuid))
         {
             Configuration.DeviceUuid = Guid.NewGuid().ToString();
+            dirty = true;
+        }
+
+        // Migrace: starý default UA měl smyšlenou verzi addonu ("ver2.0") a backend SC
+        // kvůli ní odmítal resolve endpoint (prázdná 503). Přepsat na aktuální default.
+        if (Configuration.UserAgent == "Kodi/21.2 (Windows NT 10.0; Win64; x64) App_Bitness/64 (cs; ver2.0)")
+        {
+            Configuration.UserAgent = new PluginConfiguration().UserAgent;
+            dirty = true;
+        }
+
+        if (dirty)
+        {
             SaveConfiguration();
         }
     }

@@ -124,6 +124,12 @@ public class ScController : ControllerBase
             {
                 var keys = string.Join(",", strmsEl[0].EnumerateObject().Select(p => p.Name));
                 _logger.LogInformation("StreamCinema: strms[0] klíče: {Keys}", keys);
+
+                // `headers` u streamu může nést hlavičky nutné pro resolve/download — zalogovat obsah
+                if (strmsEl[0].TryGetProperty("headers", out var hdrs))
+                {
+                    _logger.LogInformation("StreamCinema: strms[0].headers: {Headers}", hdrs.GetRawText());
+                }
             }
 
             var streams = ScCatalog.ParseStreams(doc).Select(s => new

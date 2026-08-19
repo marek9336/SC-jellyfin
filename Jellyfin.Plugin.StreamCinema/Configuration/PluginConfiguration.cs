@@ -29,10 +29,11 @@ public class PluginConfiguration : BasePluginConfiguration
     public string CatalogLanguage { get; set; } = "cs";
 
     /// <summary>
-    /// User-Agent pro katalog. Musí vypadat jako Kodi klient — v případě potřeby
-    /// zkopíruj přesnou hodnotu z Kodi logu (anti-ban).
+    /// User-Agent pro katalog. Formát reálného addonu: xbmc.getUserAgent() + " (lang; verVERZE_ADDONU)".
+    /// KRITICKÉ: backend SC podle verze addonu v UA gate-uje resolve endpoint (/ws2) —
+    /// smyšlená verze = prázdná 503. Držet v sync s aktuální verzí Kodi addonu!
     /// </summary>
-    public string UserAgent { get; set; } = "Kodi/21.2 (Windows NT 10.0; Win64; x64) App_Bitness/64 (cs; ver2.0)";
+    public string UserAgent { get; set; } = "Kodi/21.3 (Windows NT 10.0; Win64; x64) App_Bitness/64 (cs; ver2.6.7.1+k19)";
 
     // ── Automatický výběr streamu (⚡ Stáhnout auto + budoucí Trakt watcher) ──
     /// <summary>Jazyk s nejvyšší prioritou (porovnává se s linfo streamu, např. CZ).</summary>

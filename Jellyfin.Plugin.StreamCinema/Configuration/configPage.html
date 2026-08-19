@@ -213,7 +213,18 @@
                     <h2 style="margin-top:1.5em;">Pokročilé</h2>
                     <div class="inputContainer">
                         <input is="emby-input" type="text" id="cfgUserAgent" label="User-Agent katalogu" />
-                        <div class="fieldDescription">Musí vypadat jako Kodi klient. V případě potíží zkopíruj přesnou hodnotu z Kodi logu.</div>
+                        <div class="fieldDescription">
+                            Formát reálného addonu: <code>Kodi/VERZE (…) App_Bitness/64 (cs; verVERZE_ADDONU)</code>.
+                            Backend podle verze addonu pouští resolve streamů — drž v sync s nainstalovaným Kodi addonem.
+                        </div>
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="cfgDeviceUuid" label="Device UUID (X-Uuid)" />
+                        <div class="fieldDescription">
+                            Identita zařízení vůči katalogu. Můžeš sem vložit UUID svého Kodi
+                            (Kodi: userdata/addon_data/plugin.video.stream-cinema/settings.xml → <code>system.uuid</code>),
+                            aby plugin vystupoval jako tvé schválené Kodi zařízení. Neměň zbytečně — nová hodnota = nové zařízení.
+                        </div>
                     </div>
 
                     <br>
@@ -667,7 +678,7 @@
             'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent',
             'PreferredLang1', 'PreferredLang2', 'PreferredLang3',
             'MaxQuality', 'MaxFileSizeGb', 'MaxBitrateMbps', 'CodecPreference',
-            'HdrMode', 'DvMode', 'AtmosMode'
+            'HdrMode', 'DvMode', 'AtmosMode', 'DeviceUuid'
         ];
 
         function loadConfig() {
