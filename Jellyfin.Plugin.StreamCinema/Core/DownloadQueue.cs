@@ -15,6 +15,8 @@ public sealed class DownloadQueue
     private readonly Action<string> _log;
     private readonly object _lock = new();
 
+    private readonly SemaphoreSlim _wake = new(0, 1);
+
     private PluginState _state = new();
 
     public DownloadQueue(string stateFile, Action<string> log)
@@ -22,6 +24,35 @@ public sealed class DownloadQueue
         _stateFile = stateFile;
         _log = log;
         Load();
+    }
+
+    /// <summary>Probudí worker z čekání (pauza/okno/idle), aby hned zkontroloval frontu.</summary>
+    public void Wake()
+    {
+        try
+        {
+            _wake.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // signál už čeká — stačí jeden
+        }
+    }
+
+    /// <summary>
+    /// Čekání workeru přerušitelné signálem Wake(). Vrací true, když bylo čekání
+    /// přerušeno signálem (worker má hned znovu zkontrolovat frontu).
+    /// </summary>
+    public async Task<bool> WaitOrWakeAsync(TimeSpan delay, CancellationToken ct)
+    {
+        try
+        {
+            return await _wake.WaitAsync(delay, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     public bool WorkerPaused
@@ -42,12 +73,40 @@ public sealed class DownloadQueue
     {
         lock (_lock)
         {
+            // „Stáhnout teď" položky mají přednost
             var item = _state.Items
                 .Where(i => i.Status == QueueItemStatus.Queued)
-                .OrderBy(i => i.AddedUtc)
+                .OrderByDescending(i => i.ForceNow)
+                .ThenBy(i => i.AddedUtc)
                 .FirstOrDefault();
             return item == null ? null : Clone(item);
         }
+    }
+
+    /// <summary>
+    /// „Stáhnout teď": označí položku k okamžitému stažení (obejde okno/pauzy)
+    /// a probudí worker. Funguje i na chybové položky (retry + přednost).
+    /// </summary>
+    public bool ForceNow(Guid id)
+    {
+        lock (_lock)
+        {
+            var item = _state.Items.FirstOrDefault(i =>
+                i.Id == id && i.Status is QueueItemStatus.Queued or QueueItemStatus.Error or QueueItemStatus.Skipped);
+            if (item == null)
+            {
+                return false;
+            }
+
+            item.Status = QueueItemStatus.Queued;
+            item.ErrorMessage = null;
+            item.ForceNow = true;
+            SaveLocked();
+            _log($"queue: \"{item.Title}\" označeno Stáhnout teď");
+        }
+
+        Wake();
+        return true;
     }
 
     public void Add(QueueItem item)

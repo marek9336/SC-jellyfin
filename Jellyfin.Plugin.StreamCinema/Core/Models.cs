@@ -75,6 +75,12 @@ public class QueueItem
 
     /// <summary>Počet neúspěšných pokusů (pro automatický retry s odstupem).</summary>
     public int FailCount { get; set; }
+
+    /// <summary>
+    /// „Stáhnout teď" — položka má přednost, obejde časové okno a pauzy mezi soubory.
+    /// Denní strop a min. volné místo platí dál (bezpečnostní limity).
+    /// </summary>
+    public bool ForceNow { get; set; }
 }
 
 /// <summary>

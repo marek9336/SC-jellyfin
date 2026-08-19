@@ -62,7 +62,7 @@ public sealed class DownloadWorkerService : BackgroundService
 
         if (cfg == null || _state.Queue.WorkerPaused)
         {
-            await SafeDelay(IdlePoll, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(IdlePoll, ct).ConfigureAwait(false);
             return;
         }
 
@@ -70,7 +70,7 @@ public sealed class DownloadWorkerService : BackgroundService
         if (item == null)
         {
             status.LastMessage = "Fronta je prázdná";
-            await SafeDelay(IdlePoll, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(IdlePoll, ct).ConfigureAwait(false);
             return;
         }
 
@@ -79,34 +79,36 @@ public sealed class DownloadWorkerService : BackgroundService
         if (string.IsNullOrWhiteSpace(cfg.KraskaUsername))
         {
             status.LastMessage = "Chybí kra.sk účet v nastavení";
-            await SafeDelay(BlockedPoll, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
             return;
         }
 
-        // Časové okno (From == To → vypnuto)
-        if (cfg.WindowFromHour != cfg.WindowToHour && !InWindow(DateTime.Now.Hour, cfg.WindowFromHour, cfg.WindowToHour))
+        // Časové okno (From == To → vypnuto). „Stáhnout teď" okno obchází.
+        if (!item.ForceNow
+            && cfg.WindowFromHour != cfg.WindowToHour
+            && !InWindow(DateTime.Now.Hour, cfg.WindowFromHour, cfg.WindowToHour))
         {
             status.LastMessage = $"Mimo časové okno ({cfg.WindowFromHour}:00–{cfg.WindowToHour}:00), čekám";
-            await SafeDelay(BlockedPoll, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
             return;
         }
 
-        // Denní strop
+        // Denní strop — platí i pro „Stáhnout teď" (anti-ban pojistka)
         if (cfg.DailyCapGb > 0 && _state.Queue.GetDailyBytes() >= (long)cfg.DailyCapGb * 1024 * 1024 * 1024)
         {
             status.LastMessage = $"Denní limit {cfg.DailyCapGb} GB vyčerpán, pokračuji zítra";
-            await SafeDelay(BlockedPoll, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
             return;
         }
 
-        // Volné místo
+        // Volné místo — platí vždy
         var targetRoot = item.MediaType == ScMediaType.Episode ? cfg.SeriesPath : cfg.MoviesPath;
         var free = DownloadEngine.GetFreeSpace(targetRoot);
         status.FreeSpaceBytes = free;
         if (free > 0 && free < (long)cfg.MinFreeSpaceGb * 1024 * 1024 * 1024)
         {
             status.LastMessage = $"Málo volného místa ({free / (1024 * 1024 * 1024)} GB), stahování pozastaveno";
-            await SafeDelay(BlockedPoll, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
             return;
         }
 
@@ -189,6 +191,7 @@ public sealed class DownloadWorkerService : BackgroundService
                 i.TargetPath = finalPath;
                 i.BytesDone = i.BytesTotal;
                 i.ErrorMessage = null;
+                i.ForceNow = false;
             });
 
             _logger.LogInformation("StreamCinema: dokončeno \"{Title}\"", DisplayTitle(item));
@@ -199,13 +202,23 @@ public sealed class DownloadWorkerService : BackgroundService
             }
 
             // ── Lidská pauza před dalším souborem ─────────────────
-            var min = Math.Max(0, cfg.PauseMinMinutes);
-            var max = Math.Max(min, cfg.PauseMaxMinutes);
-            var pause = TimeSpan.FromSeconds(_random.Next(min * 60, max * 60 + 1));
+            // Když další položka čeká jako „Stáhnout teď", jen krátký oddech.
+            TimeSpan pause;
+            if (_state.Queue.GetNextQueued()?.ForceNow == true)
+            {
+                pause = TimeSpan.FromSeconds(_random.Next(20, 61));
+            }
+            else
+            {
+                var min = Math.Max(0, cfg.PauseMinMinutes);
+                var max = Math.Max(min, cfg.PauseMaxMinutes);
+                pause = TimeSpan.FromSeconds(_random.Next(min * 60, max * 60 + 1));
+            }
+
             status.NextActionUtc = DateTime.UtcNow.Add(pause);
             status.LastMessage = $"Hotovo. Pauza {pause.TotalMinutes:F0} min před dalším stahováním";
             _logger.LogInformation("StreamCinema: pauza {Minutes:F0} min", pause.TotalMinutes);
-            await SafeDelay(pause, ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(pause, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -221,10 +234,14 @@ public sealed class DownloadWorkerService : BackgroundService
                 i.ErrorMessage = ex.Message;
                 // Do 3 pokusů automatický retry (položka zůstane ve frontě), pak Error
                 i.Status = i.FailCount >= 3 ? QueueItemStatus.Error : QueueItemStatus.Queued;
+                if (i.Status == QueueItemStatus.Error)
+                {
+                    i.ForceNow = false; // definitivní chyba ruší přednost
+                }
             });
 
             status.LastMessage = $"Chyba: {ex.Message}";
-            await SafeDelay(TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+            await _state.Queue.WaitOrWakeAsync(TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
         }
         finally
         {

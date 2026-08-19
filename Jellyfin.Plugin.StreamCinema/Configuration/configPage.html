@@ -548,10 +548,16 @@
                     var name = isEpisode(i)
                         ? (i.seriesTitle || i.title) + ' S' + String(i.season || 0).padStart(2, '0') + 'E' + String(i.episode || 0).padStart(2, '0')
                         : i.title + (i.year ? ' (' + i.year + ')' : '');
+                    var canForce = (stKey === 'Queued' || stKey === 'Error' || stKey === 'Skipped') && !i.forceNow;
+                    var forceBadge = (i.forceNow && stKey === 'Queued')
+                        ? ' <span style="background:#e65100; color:#fff; border-radius:3px; padding:0 .35em; font-size:.78em;">⚡ přednost</span>'
+                        : '';
+
                     html += '<div style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
                         + '<span>' + esc(name) + ' <span style="opacity:.6;">' + esc(i.quality || '') + ' ' + esc(i.sizeText || '') + '</span><br>'
-                        + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span>'
+                        + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + forceBadge + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span>'
                         + '<span style="display:flex; gap:.4em;">'
+                        + (canForce ? '<button is="emby-button" type="button" class="raised button-submit sc-force" data-id="' + i.id + '" style="padding:.2em .7em;" title="Obejde časové okno a pauzy; denní limit a volné místo platí dál"><span>▶ Teď</span></button>' : '')
                         + (stKey === 'Error' ? '<button is="emby-button" type="button" class="raised sc-retry" data-id="' + i.id + '" style="padding:.2em .7em;"><span>↻ Znovu</span></button>' : '')
                         + (stKey !== 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-remove" data-id="' + i.id + '" style="padding:.2em .7em;"><span>🗑</span></button>' : '')
                         + '</span></div>';
@@ -567,6 +573,11 @@
                 el('scQueueList').querySelectorAll('.sc-retry').forEach(function (b) {
                     b.addEventListener('click', function () {
                         api('POST', 'Queue/' + b.getAttribute('data-id') + '/Retry').then(refreshQueue);
+                    });
+                });
+                el('scQueueList').querySelectorAll('.sc-force').forEach(function (b) {
+                    b.addEventListener('click', function () {
+                        api('POST', 'Queue/' + b.getAttribute('data-id') + '/Now').then(refreshQueue);
                     });
                 });
             });

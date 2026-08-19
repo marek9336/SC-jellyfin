@@ -274,6 +274,7 @@ public class ScController : ControllerBase
                 language = i.Language,
                 sizeText = i.SizeText,
                 status = i.Status.ToString(),
+                forceNow = i.ForceNow,
                 errorMessage = i.ErrorMessage,
                 bytesDone = i.BytesDone,
                 bytesTotal = i.BytesTotal,
@@ -296,6 +297,16 @@ public class ScController : ControllerBase
     public ActionResult RetryQueueItem([FromRoute] Guid id)
     {
         return Ok(new { success = _state.Queue.Retry(id) });
+    }
+
+    /// <summary>
+    /// „Stáhnout teď" — položka dostane přednost, obejde časové okno a pauzy
+    /// mezi soubory a worker se probudí. Denní strop a volné místo platí dál.
+    /// </summary>
+    [HttpPost("Queue/{id}/Now")]
+    public ActionResult ForceNowItem([FromRoute] Guid id)
+    {
+        return Ok(new { success = _state.Queue.ForceNow(id) });
     }
 
     /// <summary>Pozastaví / obnoví worker.</summary>
