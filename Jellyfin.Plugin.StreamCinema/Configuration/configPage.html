@@ -68,7 +68,7 @@
                         <div id="scStatusProgress" style="background:#00a4dc; height:100%; width:0;"></div>
                     </div>
                     <div id="scStatusDetail" style="margin-top:.5em; font-size:.9em; opacity:.75;"></div>
-                    <button is="emby-button" type="button" id="scPauseBtn" class="raised" style="margin-top:.75em;"><span>⏸ Pozastavit</span></button>
+                    <button is="emby-button" type="button" id="scPauseBtn" class="raised" style="margin-top:.75em;" title="Pozastaví worker a zastaví i právě běžící přenos (stažená část zůstane, naváže se)"><span>⏸ Pozastavit</span></button>
                 </div>
                 <div id="scQueueList"></div>
             </div>
@@ -566,6 +566,7 @@
                         + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + forceBadge + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span>'
                         + '<span style="display:flex; gap:.4em;">'
                         + (canForce ? '<button is="emby-button" type="button" class="raised button-submit sc-force" data-id="' + i.id + '" style="padding:.2em .7em;" title="Obejde časové okno a pauzy; denní limit a volné místo platí dál"><span>▶ Teď</span></button>' : '')
+                        + (stKey === 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-stop" data-id="' + i.id + '" style="padding:.2em .7em;" title="Zastaví přenos, položka se vrátí do fronty; stažená část zůstane a naváže se"><span>⏹ Zastavit</span></button>' : '')
                         + (stKey === 'Error' ? '<button is="emby-button" type="button" class="raised sc-retry" data-id="' + i.id + '" style="padding:.2em .7em;"><span>↻ Znovu</span></button>' : '')
                         + (stKey !== 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-remove" data-id="' + i.id + '" style="padding:.2em .7em;"><span>🗑</span></button>' : '')
                         + '</span></div>';
@@ -586,6 +587,11 @@
                 el('scQueueList').querySelectorAll('.sc-force').forEach(function (b) {
                     b.addEventListener('click', function () {
                         api('POST', 'Queue/' + b.getAttribute('data-id') + '/Now').then(refreshQueue);
+                    });
+                });
+                el('scQueueList').querySelectorAll('.sc-stop').forEach(function (b) {
+                    b.addEventListener('click', function () {
+                        api('POST', 'Queue/' + b.getAttribute('data-id') + '/Stop').then(refreshQueue);
                     });
                 });
             });

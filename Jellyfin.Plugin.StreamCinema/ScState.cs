@@ -27,6 +27,54 @@ public sealed class ScState : IDisposable
     /// <summary>Runtime stav workeru pro /status endpoint (aktualizuje worker).</summary>
     public WorkerStatus Status { get; } = new();
 
+    // ── Zrušení běžícího stahování (⏹ Zastavit / Pozastavit) ──────
+    private readonly object _dlLock = new();
+    private CancellationTokenSource? _dlCts;
+
+    /// <summary>Worker: založí zrušitelný scope pro jedno stahování. Vrací token pro resolve+download.</summary>
+    public CancellationToken BeginDownload(CancellationToken outer)
+    {
+        lock (_dlLock)
+        {
+            _dlCts?.Dispose();
+            _dlCts = CancellationTokenSource.CreateLinkedTokenSource(outer);
+            return _dlCts.Token;
+        }
+    }
+
+    /// <summary>Worker: ukončí scope stahování.</summary>
+    public void EndDownload()
+    {
+        lock (_dlLock)
+        {
+            _dlCts?.Dispose();
+            _dlCts = null;
+        }
+    }
+
+    /// <summary>
+    /// Zruší běžící stahování. Když je zadané id, ruší jen pokud se právě stahuje tato položka.
+    /// Vrací true, když bylo co zrušit.
+    /// </summary>
+    public bool CancelDownload(Guid? id = null)
+    {
+        lock (_dlLock)
+        {
+            if (_dlCts == null || _dlCts.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            if (id != null && Status.CurrentItemId != id)
+            {
+                return false;
+            }
+
+            _dlCts.Cancel();
+            return true;
+        }
+    }
+
     public ScState(IApplicationPaths applicationPaths, IHttpClientFactory httpClientFactory, ILogger<ScState> logger)
     {
         _logger = logger;

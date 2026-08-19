@@ -119,10 +119,13 @@ public sealed class DownloadWorkerService : BackgroundService
         status.CurrentItemTitle = DisplayTitle(item);
         status.LastMessage = null;
 
+        // Zrušitelný scope: ⏹ Zastavit / Pozastavit umí přerušit běžící přenos
+        var itemCt = _state.BeginDownload(ct);
+
         try
         {
             // Info o předplatném (jako addon: varování při <14 dnech)
-            var userInfo = await _state.Kraska.UserInfoAsync(ct).ConfigureAwait(false);
+            var userInfo = await _state.Kraska.UserInfoAsync(itemCt).ConfigureAwait(false);
             if (userInfo != null)
             {
                 status.KraskaDaysLeft = userInfo.DaysLeft;
@@ -137,7 +140,14 @@ public sealed class DownloadWorkerService : BackgroundService
             var ident = item.Ident;
             if (!string.IsNullOrWhiteSpace(item.StreamUrl))
             {
-                ident = await _state.Catalog.ResolveStreamIdentAsync(item.StreamUrl, ct).ConfigureAwait(false);
+                try
+                {
+                    ident = await _state.Catalog.ResolveStreamIdentAsync(item.StreamUrl, itemCt).ConfigureAwait(false);
+                }
+                catch (HttpRequestException hre)
+                {
+                    throw new KraskaException($"Katalog SC nedostupný (HTTP {(int?)hre.StatusCode ?? 0}) při resolve streamu");
+                }
             }
 
             if (string.IsNullOrWhiteSpace(ident))
@@ -145,7 +155,7 @@ public sealed class DownloadWorkerService : BackgroundService
                 throw new KraskaException("Položka nemá ident ani resolve URL streamu");
             }
 
-            var url = await _state.Kraska.ResolveAsync(ident, ct).ConfigureAwait(false);
+            var url = await _state.Kraska.ResolveAsync(ident, itemCt).ConfigureAwait(false);
             var extension = MediaOrganizer.ExtensionFromUrl(url);
             var finalPath = MediaOrganizer.BuildTargetPath(cfg.MoviesPath, cfg.SeriesPath, item, extension);
             var partPath = finalPath + ".part";
@@ -155,34 +165,42 @@ public sealed class DownloadWorkerService : BackgroundService
             var speedLimitBps = cfg.SpeedLimitMbps > 0 ? (long)cfg.SpeedLimitMbps * 1024 * 1024 / 8 : 0;
 
             var lastSave = DateTime.UtcNow;
-            var sessionBytes = await _state.Engine.DownloadAsync(
-                url,
-                partPath,
-                speedLimitBps,
-                (done, total, speed) =>
-                {
-                    status.CurrentBytesDone = done;
-                    status.CurrentBytesTotal = total;
-                    status.CurrentSpeedBps = speed;
-
-                    // Progres do fronty ukládat střídmě (I/O)
-                    if ((DateTime.UtcNow - lastSave).TotalSeconds >= 5)
+            long sessionBytes;
+            try
+            {
+                sessionBytes = await _state.Engine.DownloadAsync(
+                    url,
+                    partPath,
+                    speedLimitBps,
+                    (done, total, speed) =>
                     {
-                        lastSave = DateTime.UtcNow;
-                        _state.Queue.Update(item.Id, i =>
+                        status.CurrentBytesDone = done;
+                        status.CurrentBytesTotal = total;
+                        status.CurrentSpeedBps = speed;
+
+                        // Progres do fronty ukládat střídmě (I/O)
+                        if ((DateTime.UtcNow - lastSave).TotalSeconds >= 5)
                         {
-                            i.BytesDone = done;
-                            i.BytesTotal = total;
-                        });
-                    }
-                },
-                ct).ConfigureAwait(false);
+                            lastSave = DateTime.UtcNow;
+                            _state.Queue.Update(item.Id, i =>
+                            {
+                                i.BytesDone = done;
+                                i.BytesTotal = total;
+                            });
+                        }
+                    },
+                    itemCt).ConfigureAwait(false);
+            }
+            catch (HttpRequestException hre)
+            {
+                throw new KraskaException($"kra.sk file server: HTTP {(int?)hre.StatusCode ?? 0} při stahování (server může být přetížený)");
+            }
 
             File.Move(partPath, finalPath, overwrite: true);
             _state.Queue.AddDailyBytes(sessionBytes);
 
             // Titulky (volitelné — jejich selhání nesmí shodit stahování, jako v addonu)
-            await TryDownloadSubtitles(item, finalPath, ct).ConfigureAwait(false);
+            await TryDownloadSubtitles(item, finalPath, itemCt).ConfigureAwait(false);
 
             _state.Queue.Update(item.Id, i =>
             {
@@ -220,14 +238,27 @@ public sealed class DownloadWorkerService : BackgroundService
             _logger.LogInformation("StreamCinema: pauza {Minutes:F0} min", pause.TotalMinutes);
             await _state.Queue.WaitOrWakeAsync(pause, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Restart serveru — položka se při dalším startu vrátí do fronty (Load v DownloadQueue)
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            // Uživatelské zastavení (⏹ / Pozastavit) — vrátit do fronty bez přednosti,
+            // .part zůstává, příště se naváže přes HTTP Range
+            _logger.LogInformation("StreamCinema: stahování \"{Title}\" zastaveno uživatelem", DisplayTitle(item));
+            _state.Queue.Update(item.Id, i =>
+            {
+                i.Status = QueueItemStatus.Queued;
+                i.ForceNow = false;
+            });
+            status.LastMessage = "Stahování zastaveno uživatelem";
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "StreamCinema: stahování \"{Title}\" selhalo", DisplayTitle(item));
+            var failCount = item.FailCount + 1;
             _state.Queue.Update(item.Id, i =>
             {
                 i.FailCount++;
@@ -240,11 +271,20 @@ public sealed class DownloadWorkerService : BackgroundService
                 }
             });
 
-            status.LastMessage = $"Chyba: {ex.Message}";
-            await _state.Queue.WaitOrWakeAsync(TimeSpan.FromMinutes(2), ct).ConfigureAwait(false);
+            // Backoff s jitterem (anti-ban): 1. chyba ~2–3 min, 2. chyba ~8–12 min.
+            // Status vyčistit PŘED čekáním, ať GUI neukazuje „Stahuji" u nečinného workeru.
+            var baseMinutes = failCount >= 2 ? 8 : 2;
+            var backoff = TimeSpan.FromSeconds(_random.Next(baseMinutes * 60, (int)(baseMinutes * 60 * 1.5)));
+            status.CurrentItemId = null;
+            status.CurrentItemTitle = null;
+            status.CurrentSpeedBps = 0;
+            status.NextActionUtc = DateTime.UtcNow.Add(backoff);
+            status.LastMessage = $"Chyba: {ex.Message} — další pokus ~{backoff.TotalMinutes:F0} min";
+            await _state.Queue.WaitOrWakeAsync(backoff, ct).ConfigureAwait(false);
         }
         finally
         {
+            _state.EndDownload();
             status.CurrentItemId = null;
             status.CurrentItemTitle = null;
             status.CurrentSpeedBps = 0;

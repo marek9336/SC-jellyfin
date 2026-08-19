@@ -310,6 +310,16 @@ public class ScController : ControllerBase
         return Ok(new { success = _state.Queue.ForceNow(id) });
     }
 
+    /// <summary>
+    /// ⏹ Zastaví právě běžící stahování této položky. Položka se vrátí do fronty
+    /// (bez přednosti), .part zůstává — příště se naváže přes HTTP Range.
+    /// </summary>
+    [HttpPost("Queue/{id}/Stop")]
+    public ActionResult StopQueueItem([FromRoute] Guid id)
+    {
+        return Ok(new { success = _state.CancelDownload(id) });
+    }
+
     /// <summary>Pozastaví / obnoví worker.</summary>
     [HttpPost("Worker/{action}")]
     public ActionResult WorkerControl([FromRoute][Required] string action)
@@ -318,6 +328,8 @@ public class ScController : ControllerBase
         {
             case "pause":
                 _state.Queue.WorkerPaused = true;
+                // Pauza zastaví i právě běžící přenos (.part zůstává, naváže se přes Range)
+                _state.CancelDownload();
                 return Ok(new { success = true, paused = true });
             case "resume":
                 _state.Queue.WorkerPaused = false;
