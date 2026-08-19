@@ -286,11 +286,15 @@ public class ScController : ControllerBase
         return Ok(new { items });
     }
 
-    /// <summary>Odebere položku z fronty (probíhající stahování odebrat nejde).</summary>
+    /// <summary>
+    /// Odebere položku z fronty. Když se právě stahuje, přenos se nejdřív utne
+    /// (.part zůstává na disku). Funguje i během čekání na další pokus.
+    /// </summary>
     [HttpDelete("Queue/{id}")]
     public ActionResult RemoveFromQueue([FromRoute] Guid id)
     {
-        return Ok(new { success = _state.Queue.Remove(id) });
+        _state.CancelDownload(id); // pokud zrovna běží, zastavit přenos
+        return Ok(new { success = _state.Queue.Remove(id, force: true) });
     }
 
     /// <summary>Vrátí chybnou položku zpět do fronty.</summary>

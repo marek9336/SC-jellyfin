@@ -630,7 +630,7 @@
                         + (canForce ? '<button is="emby-button" type="button" class="raised button-submit sc-force" data-id="' + i.id + '" style="padding:.2em .7em;" title="Obejde časové okno a pauzy; denní limit a volné místo platí dál"><span>▶ Teď</span></button>' : '')
                         + (stKey === 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-stop" data-id="' + i.id + '" style="padding:.2em .7em;" title="Zastaví přenos, položka se vrátí do fronty; stažená část zůstane a naváže se"><span>⏹ Zastavit</span></button>' : '')
                         + (stKey === 'Error' ? '<button is="emby-button" type="button" class="raised sc-retry" data-id="' + i.id + '" style="padding:.2em .7em;"><span>↻ Znovu</span></button>' : '')
-                        + (stKey !== 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-remove" data-id="' + i.id + '" style="padding:.2em .7em;"><span>🗑</span></button>' : '')
+                        + '<button is="emby-button" type="button" class="raised sc-remove" data-id="' + i.id + '" style="padding:.2em .7em;" title="' + (stKey === 'Downloading' ? 'Zastaví přenos a odebere z fronty' : 'Odebrat z fronty') + '"><span>🗑</span></button>'
                         + '</span></div>';
                 });
                 html += '</div>';

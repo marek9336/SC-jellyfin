@@ -130,19 +130,27 @@ public sealed class DownloadQueue
         }
     }
 
-    public bool Remove(Guid id)
+    public bool Remove(Guid id, bool force = false)
     {
+        bool removed;
         lock (_lock)
         {
-            var removed = _state.Items.RemoveAll(i => i.Id == id && i.Status != QueueItemStatus.Downloading);
-            if (removed > 0)
+            removed = _state.Items.RemoveAll(i =>
+                i.Id == id && (force || i.Status != QueueItemStatus.Downloading)) > 0;
+            if (removed)
             {
                 SaveLocked();
-                return true;
             }
-
-            return false;
         }
+
+        if (removed)
+        {
+            // Probudit worker: když čekal v backoffu na tuhle položku, ať hned
+            // přehodnotí frontu a nezobrazuje „další pokus" u smazané položky
+            Wake();
+        }
+
+        return removed;
     }
 
     public bool Retry(Guid id)

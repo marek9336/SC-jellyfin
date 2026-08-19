@@ -50,23 +50,42 @@ public sealed class ScCatalog
     /// </summary>
     public async Task<JsonDocument> GetAsync(string path, IDictionary<string, string>? extraParams, CancellationToken ct)
     {
-        var query = new List<KeyValuePair<string, string>>
+        // Cesta může nést vlastní query (resolve URL streamů z `strms`, např. /ws2/...?...).
+        // Sloučit jako addon (sc.py prepare(): urlparse + parse_qs + update) — jinak by
+        // vzniklo URL se dvěma '?' a backend vrací 503.
+        var qIdx = path.IndexOf('?', StringComparison.Ordinal);
+        var basePath = qIdx >= 0 ? path[..qIdx] : path;
+        var query = new List<KeyValuePair<string, string>>();
+
+        if (qIdx >= 0)
         {
-            new("ver", ApiVersion),
-            new("uid", Uuid),
-            new("lang", Language),
-            new("skin", "estuary"),
-        };
+            foreach (var pair in path[(qIdx + 1)..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var eq = pair.IndexOf('=', StringComparison.Ordinal);
+                query.Add(eq >= 0
+                    ? new(Uri.UnescapeDataString(pair[..eq]), Uri.UnescapeDataString(pair[(eq + 1)..]))
+                    : new(Uri.UnescapeDataString(pair), string.Empty));
+            }
+        }
+
+        // Defaulty jako addon — nepřepisovat, co už v query je (viz default_params)
+        AddIfMissing(query, "ver", ApiVersion);
+        AddIfMissing(query, "uid", Uuid);
+        AddIfMissing(query, "lang", Language);
+        AddIfMissing(query, "skin", "estuary");
+        AddIfMissing(query, "HDR", "1");
+        AddIfMissing(query, "DV", "1");
 
         if (_kraskaLoggedIn())
         {
-            query.Add(new("pro", "kraska"));
+            AddIfMissing(query, "pro", "kraska");
         }
 
         if (extraParams != null)
         {
             foreach (var kv in extraParams)
             {
+                query.RemoveAll(q => q.Key == kv.Key);
                 query.Add(new(kv.Key, kv.Value));
             }
         }
@@ -77,7 +96,7 @@ public sealed class ScCatalog
         var qs = string.Join("&", query.Select(kv =>
             $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
 
-        var url = $"{BaseUrl}{path}?{qs}";
+        var url = $"{BaseUrl}{basePath}?{qs}";
 
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         ApplyHeaders(req);
@@ -267,6 +286,14 @@ public sealed class ScCatalog
         if (!string.IsNullOrEmpty(token))
         {
             req.Headers.TryAddWithoutValidation("X-AUTH-TOKEN", token);
+        }
+    }
+
+    private static void AddIfMissing(List<KeyValuePair<string, string>> query, string key, string value)
+    {
+        if (!query.Any(q => q.Key == key))
+        {
+            query.Add(new(key, value));
         }
     }
 
