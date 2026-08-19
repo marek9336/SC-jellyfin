@@ -105,14 +105,52 @@ public class ScController : ControllerBase
         }, ct);
     }
 
-    /// <summary>Načte /Play/... a vrátí seznam streamů k výběru.</summary>
+    /// <summary>
+    /// Načte /Play/... a vrátí seznam streamů k výběru.
+    /// POZOR: Jellyfin serializuje typované objekty PascalCase, ale GUI čte camelCase
+    /// → explicitní projekce na anonymní objekty (kontrakt nezávislý na JSON nastavení).
+    /// </summary>
     [HttpPost("Streams")]
     public async Task<ActionResult> Streams([FromBody] BrowseRequest request, CancellationToken ct)
     {
         try
         {
             using var doc = await _state.Catalog.GetAsync(request.Path, request.Params, ct).ConfigureAwait(false);
-            var streams = ScCatalog.ParseStreams(doc);
+
+            // Diagnostika tvaru API: klíče prvního streamu do logu (bez hodnot — žádné tokeny)
+            if (doc.RootElement.TryGetProperty("strms", out var strmsEl)
+                && strmsEl.ValueKind == System.Text.Json.JsonValueKind.Array
+                && strmsEl.GetArrayLength() > 0)
+            {
+                var keys = string.Join(",", strmsEl[0].EnumerateObject().Select(p => p.Name));
+                _logger.LogInformation("StreamCinema: strms[0] klíče: {Keys}", keys);
+            }
+
+            var streams = ScCatalog.ParseStreams(doc).Select(s => new
+            {
+                index = s.Index,
+                ident = s.Ident,
+                url = s.Url,
+                provider = s.Provider,
+                language = s.Language,
+                languages = s.Languages,
+                quality = s.Quality,
+                sizeText = s.SizeText,
+                sizeBytes = s.SizeBytes,
+                bitrate = s.Bitrate,
+                videoInfo = s.VideoInfo,
+                audioInfo = s.AudioInfo,
+                subsUrl = s.SubsUrl,
+                codec = s.Codec,
+                width = s.Width,
+                height = s.Height,
+                hdr = s.Hdr,
+                dv = s.Dv,
+                atmos = s.Atmos,
+                group = s.Group,
+                source = s.Source,
+            }).ToList();
+
             return Ok(new { streams });
         }
         catch (Exception ex)
@@ -217,11 +255,33 @@ public class ScController : ControllerBase
         }
     }
 
-    /// <summary>Obsah fronty.</summary>
+    /// <summary>Obsah fronty. Explicitní camelCase projekce — viz poznámka u Streams.</summary>
     [HttpGet("Queue")]
     public ActionResult GetQueue()
     {
-        return Ok(new { items = _state.Queue.GetAll().OrderByDescending(i => i.AddedUtc) });
+        var items = _state.Queue.GetAll()
+            .OrderByDescending(i => i.AddedUtc)
+            .Select(i => new
+            {
+                id = i.Id,
+                title = i.Title,
+                year = i.Year,
+                mediaType = i.MediaType.ToString(),
+                seriesTitle = i.SeriesTitle,
+                season = i.Season,
+                episode = i.Episode,
+                quality = i.Quality,
+                language = i.Language,
+                sizeText = i.SizeText,
+                status = i.Status.ToString(),
+                errorMessage = i.ErrorMessage,
+                bytesDone = i.BytesDone,
+                bytesTotal = i.BytesTotal,
+                addedUtc = i.AddedUtc,
+            })
+            .ToList();
+
+        return Ok(new { items });
     }
 
     /// <summary>Odebere položku z fronty (probíhající stahování odebrat nejde).</summary>

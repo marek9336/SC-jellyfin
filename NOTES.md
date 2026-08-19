@@ -149,6 +149,15 @@ Rozhodnuto: **filmy zůstávají trvale**; plugin jen hlídá volné místo
 - [ ] Test na reálném JF 10.11.11 (TrueNAS) — ověřit tvary JSON odpovědí katalogu
 - [ ] Fáze 2: Trakt watcher (auto-fronta z Trakt seznamu)
 
+### Poznámky k implementaci
+
+- **JSON casing (v0.2.1):** Jellyfin serializuje typované C# objekty s PascalCase
+  klíči, ale configPage JS čte camelCase. Všechny REST odpovědi pluginu proto
+  **projektovat na anonymní objekty s malými názvy** (`new { quality = s.Quality }`)
+  — nikdy nevracet typované objekty přímo.
+- Endpoint Streams loguje klíče `strms[0]` (jen názvy, bez hodnot) — diagnostika
+  změn tvaru API bez debug buildů.
+
 ### Poznámky k buildu
 - Repo obsahuje `NuGet.Config` (nuget.org) — čisté SDK nemá zdroj nastavený.
 - Lokální build: `dotnet build Jellyfin.Plugin.StreamCinema -c Release`.
