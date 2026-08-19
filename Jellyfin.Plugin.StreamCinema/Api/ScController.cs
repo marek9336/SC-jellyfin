@@ -171,10 +171,10 @@ public class ScController : ControllerBase
 
         var item = new QueueItem
         {
-            Title = request.Title ?? "Neznámý",
+            Title = MediaOrganizer.CleanTitle(request.Title ?? "Neznámý"),
             Year = request.Year,
             MediaType = request.MediaType == "episode" ? ScMediaType.Episode : ScMediaType.Movie,
-            SeriesTitle = request.SeriesTitle,
+            SeriesTitle = request.SeriesTitle == null ? null : MediaOrganizer.CleanTitle(request.SeriesTitle),
             Season = request.Season,
             Episode = request.Episode,
             Ident = request.Ident ?? string.Empty,
@@ -231,10 +231,10 @@ public class ScController : ControllerBase
 
             var item = new QueueItem
             {
-                Title = request.Title ?? "Neznámý",
+                Title = MediaOrganizer.CleanTitle(request.Title ?? "Neznámý"),
                 Year = request.Year,
                 MediaType = request.MediaType == "episode" ? ScMediaType.Episode : ScMediaType.Movie,
-                SeriesTitle = request.SeriesTitle,
+                SeriesTitle = request.SeriesTitle == null ? null : MediaOrganizer.CleanTitle(request.SeriesTitle),
                 Season = request.Season,
                 Episode = request.Episode,
                 Ident = best.Ident,
