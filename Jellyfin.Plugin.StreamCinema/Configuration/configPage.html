@@ -136,6 +136,14 @@
                         <div class="fieldDescription">Např. 30 → 150GB remux prohraje, 20GB 4K web-dl vyhraje.</div>
                     </div>
                     <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgMaxBitrateMbps" label="Max bitrate (Mbit/s, 0 = bez limitu)" min="0" />
+                        <div class="fieldDescription">
+                            Limit pro vzdálené sledování: bitrate souboru by neměl přesáhnout upload tvé linky
+                            (jinak buffering/transkódování). Na rozdíl od velikosti platí stejně pro 20min epizodu
+                            i 3h film. Např. upload 50 Mbit/s → nastav ~40.
+                        </div>
+                    </div>
+                    <div class="inputContainer">
                         <input is="emby-input" type="text" id="cfgCodecPreference" label="Preferované kodeky (oddělené |, první = nejlepší)" />
                         <div class="fieldDescription">Např. <code>hevc|h264|av1</code> — kdo chce starší formát kvůli kompatibilitě, dá <code>h264|hevc</code>.</div>
                     </div>
@@ -590,7 +598,7 @@
             'PauseMinMinutes', 'PauseMaxMinutes', 'SpeedLimitMbps', 'DailyCapGb',
             'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent',
             'PreferredLang1', 'PreferredLang2', 'PreferredLang3',
-            'MaxQuality', 'MaxFileSizeGb', 'CodecPreference',
+            'MaxQuality', 'MaxFileSizeGb', 'MaxBitrateMbps', 'CodecPreference',
             'HdrMode', 'DvMode', 'AtmosMode'
         ];
 

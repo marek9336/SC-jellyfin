@@ -20,6 +20,9 @@ public sealed class StreamSelectorOptions
     /// <summary>0 = bez limitu.</summary>
     public int MaxFileSizeGb { get; set; } = 30;
 
+    /// <summary>Max bitrate v Mbit/s, 0 = bez limitu (limit uploadu linky pro vzdálené sledování).</summary>
+    public int MaxBitrateMbps { get; set; }
+
     /// <summary>Kodeky oddělené |, první = nejvyšší priorita.</summary>
     public string CodecPreference { get; set; } = "hevc|h264|av1";
 
@@ -95,6 +98,14 @@ public static class StreamSelector
                 continue;
             }
 
+            // Max bitrate: tvrdý limit (upload linky). Stream bez údaje o bitrate
+            // se nevyřazuje — nelze ho posoudit (a nedostane ani bitrate bonus).
+            if (o.MaxBitrateMbps > 0 && s.Bitrate is > 0 && s.Bitrate.Value > (long)o.MaxBitrateMbps * 1_000_000)
+            {
+                excluded++;
+                continue;
+            }
+
             var langScore = LangScore(s, o);
             if (langScore == 0 && o.SkipWithoutPreferredLang)
             {
@@ -147,6 +158,7 @@ public static class StreamSelector
         {
             return (null, $"žádný z {streams.Count} streamů nesplnil pravidla "
                 + $"(vyřazeno {excluded}: kvalita > {o.MaxQuality}, velikost > {o.MaxFileSizeGb} GB"
+                + (o.MaxBitrateMbps > 0 ? $", bitrate > {o.MaxBitrateMbps} Mbit/s" : string.Empty)
                 + (o.SkipWithoutPreferredLang ? ", chybí preferovaný jazyk)" : ")"));
         }
 
@@ -208,6 +220,11 @@ public static class StreamSelector
         if (!string.IsNullOrEmpty(s.SizeText))
         {
             parts.Add(s.SizeText!);
+        }
+
+        if (s.Bitrate is > 0)
+        {
+            parts.Add($"{s.Bitrate.Value / 1e6:F1} Mbit/s");
         }
 
         if (!string.IsNullOrEmpty(s.Codec))

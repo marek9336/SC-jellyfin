@@ -216,6 +216,7 @@ public class ScController : ControllerBase
                 SkipWithoutPreferredLang = cfg.SkipWithoutPreferredLang,
                 MaxQuality = cfg.MaxQuality,
                 MaxFileSizeGb = cfg.MaxFileSizeGb,
+                MaxBitrateMbps = cfg.MaxBitrateMbps,
                 CodecPreference = cfg.CodecPreference,
                 HdrMode = cfg.HdrMode,
                 DvMode = cfg.DvMode,

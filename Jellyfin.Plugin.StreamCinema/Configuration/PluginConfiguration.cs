@@ -51,6 +51,13 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Maximální velikost souboru v GB (0 = bez limitu). Větší soubory se vyřadí.</summary>
     public int MaxFileSizeGb { get; set; } = 30;
 
+    /// <summary>
+    /// Maximální bitrate v Mbit/s (0 = bez limitu). Klíčové pro vzdálené sledování:
+    /// bitrate souboru nesmí přesáhnout upload linky NASu, jinak buffering/transkódování.
+    /// Na rozdíl od velikosti funguje stejně pro 20min epizodu i 3h film.
+    /// </summary>
+    public int MaxBitrateMbps { get; set; }
+
     /// <summary>Preferované video kodeky oddělené |, první = nejvyšší priorita.</summary>
     public string CodecPreference { get; set; } = "hevc|h264|av1";
 
