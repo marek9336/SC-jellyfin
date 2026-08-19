@@ -1,0 +1,21 @@
+[
+  {
+    "guid": "d7c4b2a1-3f5e-4b8c-9a76-0e1f2d3c4b5a",
+    "name": "Stream Cinema",
+    "description": "Vyhledávání v katalogu Stream Cinema a stahování z kra.sk do knihovny Jellyfinu.",
+    "overview": "Stream Cinema pro Jellyfin",
+    "owner": "marek9336",
+    "category": "General",
+    "imageUrl": "",
+    "versions": [
+      {
+        "version": "0.1.0.0",
+        "changelog": "Viz https://github.com/marek9336/SC-jellyfin/releases/tag/v0.1.0",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/marek9336/SC-jellyfin/releases/download/v0.1.0/streamcinema_0.1.0.0.zip",
+        "checksum": "a47ef67f79d71ee77410748bfdfe4aa9",
+        "timestamp": "2026-08-19T19:09:31Z"
+      }
+    ]
+  }
+]
