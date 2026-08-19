@@ -39,6 +39,9 @@ public sealed class KraskaClient
 
     public bool IsLoggedIn => _session != null;
 
+    /// <summary>Důvod poslední neúspěšné operace (login/resolve) — pro GUI a log. Heslo nikdy neobsahuje.</summary>
+    public string? LastError { get; private set; }
+
     /// <summary>Přihlášení — získá session_id. Vrací true při úspěchu.</summary>
     public async Task<bool> LoginAsync(CancellationToken ct)
     {
@@ -50,19 +53,33 @@ public sealed class KraskaClient
                 return true;
             }
 
+            LastError = null;
+
+            if (!HasCredentials)
+            {
+                LastError = "Nejsou vyplněné přihlašovací údaje — ulož nejdřív nastavení.";
+                _log("kra: login FAILED — prázdné údaje");
+                _session = null;
+                return false;
+            }
+
             _log("kra: login start");
             var data = await PostRawAsync("/api/user/login",
                 new { data = new { username = Username, password = _password } }, ct).ConfigureAwait(false);
 
-            if (data != null && data.Value.TryGetProperty("session_id", out var sid))
+            if (data != null
+                && data.Value.TryGetProperty("session_id", out var sid)
+                && sid.ValueKind == JsonValueKind.String)
             {
                 _session = sid.GetString();
                 _userInfoCache = null;
+                LastError = null;
                 _log("kra: login OK");
                 return _session != null;
             }
 
-            _log("kra: login FAILED");
+            LastError = DescribeError(data, "Přihlášení se nezdařilo — zkontroluj jméno a heslo.");
+            _log($"kra: login FAILED — {LastError}");
             _session = null;
             return false;
         }
@@ -171,6 +188,29 @@ public sealed class KraskaClient
         }
 
         return result;
+    }
+
+    /// <summary>Vytáhne z odpovědi kra.sk čitelný důvod (msg + error kód). Nikdy neobsahuje heslo.</summary>
+    private static string DescribeError(JsonElement? data, string fallback)
+    {
+        if (data == null)
+        {
+            return "Žádná odpověď z api.kra.sk (síť nebo neplatná odpověď serveru).";
+        }
+
+        var msg = data.Value.TryGetProperty("msg", out var m) && m.ValueKind == JsonValueKind.String
+            ? m.GetString()
+            : null;
+        var code = data.Value.TryGetProperty("error", out var e) && e.TryGetInt32(out var ec)
+            ? ec
+            : (int?)null;
+
+        if (string.IsNullOrEmpty(msg))
+        {
+            return fallback;
+        }
+
+        return code != null ? $"kra.sk: {msg} (kód {code})" : $"kra.sk: {msg}";
     }
 
     private async Task<JsonElement?> PostRawAsync(string endpoint, object? payload, CancellationToken ct)

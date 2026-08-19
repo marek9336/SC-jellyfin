@@ -102,6 +102,9 @@ public sealed class ScCatalog
 
     /// <summary>
     /// Vytáhne pole `strms` z odpovědi /Play/... — defenzivně, chybějící klíče nevadí.
+    /// Reálný tvar streamu (ověřeno proti item.py addonu): `url` (resolve URL, NE ident!),
+    /// `lang`, `quality`, `size`, `vinfo`, `ainfo`, `bitrate`, `linfo` (pole jazyků),
+    /// `subs`, `provider`, `stream_info` {video{codec,width,height}, HDR, DV, Atmos, grp, src}.
     /// </summary>
     public static List<StreamOption> ParseStreams(JsonDocument playResponse)
     {
@@ -118,6 +121,7 @@ public sealed class ScCatalog
             var opt = new StreamOption
             {
                 Index = index++,
+                Url = GetString(s, "url") ?? string.Empty,
                 Ident = GetString(s, "ident") ?? string.Empty,
                 Provider = GetString(s, "provider"),
                 Language = GetString(s, "lang"),
@@ -126,15 +130,78 @@ public sealed class ScCatalog
                 VideoInfo = GetString(s, "vinfo"),
                 AudioInfo = GetString(s, "ainfo"),
                 SubsUrl = GetString(s, "subs"),
+                SizeBytes = GetLong(s, "size"),
+                Bitrate = GetLong(s, "bitrate"),
             };
 
-            if (!string.IsNullOrEmpty(opt.Ident))
+            // Číselnou velikost přeformátovat na čitelný text (API posílá bajty)
+            if (opt.SizeBytes is > 0)
+            {
+                opt.SizeText = FormatBytes(opt.SizeBytes.Value);
+            }
+
+            if (s.TryGetProperty("linfo", out var linfo) && linfo.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var l in linfo.EnumerateArray())
+                {
+                    if (l.ValueKind == JsonValueKind.String && l.GetString() is { Length: > 0 } lang)
+                    {
+                        opt.Languages.Add(lang);
+                    }
+                }
+            }
+
+            if (s.TryGetProperty("stream_info", out var si) && si.ValueKind == JsonValueKind.Object)
+            {
+                opt.Hdr = GetBool(si, "HDR");
+                opt.Dv = GetBool(si, "DV");
+                opt.Atmos = GetBool(si, "Atmos") || GetBool(si, "atmos");
+                opt.Group = GetString(si, "grp");
+                opt.Source = GetString(si, "src");
+
+                if (si.TryGetProperty("video", out var vid) && vid.ValueKind == JsonValueKind.Object)
+                {
+                    opt.Codec = GetString(vid, "codec");
+                    opt.Width = (int?)GetLong(vid, "width");
+                    opt.Height = (int?)GetLong(vid, "height");
+                }
+            }
+
+            // Stream je použitelný, když má resolve URL (běžný tvar) nebo přímý ident (starší tvar)
+            if (!string.IsNullOrEmpty(opt.Url) || !string.IsNullOrEmpty(opt.Ident))
             {
                 result.Add(opt);
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Druhý krok resolve: GET na `url` streamu vrátí {"version": N, "vN": "..."}
+    /// a kra.sk ident je "vN:hodnota". Port SCPlayItem._get_resolve_data z item.py.
+    /// </summary>
+    public async Task<string> ResolveStreamIdentAsync(string streamUrl, CancellationToken ct)
+    {
+        using var doc = await GetAsync(streamUrl, null, ct).ConfigureAwait(false);
+        var root = doc.RootElement;
+
+        var version = GetString(root, "version");
+        if (string.IsNullOrEmpty(version))
+        {
+            throw new KraskaException("Katalog nevrátil verzi streamu — stream je možná nedostupný.");
+        }
+
+        var key = "v" + version;
+        var value = GetString(root, key);
+        if (string.IsNullOrEmpty(value))
+        {
+            throw new KraskaException($"Katalog nevrátil klíč {key} — stream je možná nedostupný.");
+        }
+
+        var ident = $"{key}:{value}";
+        _log($"sc: stream resolvován na ident {key}:***");
+        return ident;
     }
 
     /// <summary>Z hodnoty `subs` (URL) vytáhne kra.sk ident — část za "/file/". Port z gui/item.py.</summary>
@@ -216,5 +283,50 @@ public sealed class ScCatalog
         }
 
         return null;
+    }
+
+    private static long? GetLong(JsonElement el, string prop)
+    {
+        if (el.ValueKind != JsonValueKind.Object || !el.TryGetProperty(prop, out var v))
+        {
+            return null;
+        }
+
+        return v.ValueKind switch
+        {
+            JsonValueKind.Number when v.TryGetInt64(out var n) => n,
+            JsonValueKind.String when long.TryParse(v.GetString(), out var n) => n,
+            _ => null,
+        };
+    }
+
+    private static bool GetBool(JsonElement el, string prop)
+    {
+        if (el.ValueKind != JsonValueKind.Object || !el.TryGetProperty(prop, out var v))
+        {
+            return false;
+        }
+
+        return v.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.Number => v.TryGetInt64(out var n) && n != 0,
+            JsonValueKind.String => v.GetString() is "1" or "true" or "True",
+            _ => false,
+        };
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double val = bytes;
+        var i = 0;
+        while (val >= 1024 && i < units.Length - 1)
+        {
+            val /= 1024;
+            i++;
+        }
+
+        return $"{val:0.##} {units[i]}";
     }
 }

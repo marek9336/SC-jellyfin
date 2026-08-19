@@ -33,7 +33,9 @@ public class ScController : ControllerBase
         var ok = await _state.Kraska.LoginAsync(ct).ConfigureAwait(false);
         if (!ok)
         {
-            return Ok(new { success = false, message = "Přihlášení selhalo — zkontroluj jméno a heslo." });
+            var reason = _state.Kraska.LastError ?? "zkontroluj jméno a heslo.";
+            _logger.LogWarning("StreamCinema: TestLogin selhal — {Reason}", reason);
+            return Ok(new { success = false, message = "Přihlášení selhalo — " + reason });
         }
 
         var info = await _state.Kraska.UserInfoAsync(ct).ConfigureAwait(false);
@@ -124,9 +126,9 @@ public class ScController : ControllerBase
     [HttpPost("Queue")]
     public ActionResult AddToQueue([FromBody] AddQueueRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Ident))
+        if (string.IsNullOrWhiteSpace(request.Ident) && string.IsNullOrWhiteSpace(request.StreamUrl))
         {
-            return BadRequest(new { error = "Chybí ident streamu" });
+            return BadRequest(new { error = "Chybí stream (ident ani URL)" });
         }
 
         var item = new QueueItem
@@ -137,7 +139,8 @@ public class ScController : ControllerBase
             SeriesTitle = request.SeriesTitle,
             Season = request.Season,
             Episode = request.Episode,
-            Ident = request.Ident,
+            Ident = request.Ident ?? string.Empty,
+            StreamUrl = request.StreamUrl,
             SubsUrl = request.SubsUrl,
             SubsLang = request.SubsLang,
             Quality = request.Quality,
@@ -229,8 +232,11 @@ public class SearchRequest
 
 public class AddQueueRequest
 {
-    [Required]
-    public string Ident { get; set; } = string.Empty;
+    /// <summary>Přímý kra.sk ident (starší tvar API). Stačí jeden z Ident/StreamUrl.</summary>
+    public string? Ident { get; set; }
+
+    /// <summary>Resolve URL streamu z katalogu (běžný tvar) — ident se získá při stahování.</summary>
+    public string? StreamUrl { get; set; }
 
     public string? Title { get; set; }
 

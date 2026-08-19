@@ -38,8 +38,14 @@ public class QueueItem
 
     public int? Episode { get; set; }
 
-    /// <summary>kra.sk ident vybraného streamu.</summary>
+    /// <summary>kra.sk ident vybraného streamu (pokud byl znám při zařazení).</summary>
     public string Ident { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Resolve URL streamu z katalogu. Když je vyplněná, worker z ní před stažením
+    /// získá ident druhým krokem (GET → {version, vN} → "vN:hodnota").
+    /// </summary>
+    public string? StreamUrl { get; set; }
 
     /// <summary>URL titulků z katalogu (ident je část za /file/), volitelné.</summary>
     public string? SubsUrl { get; set; }
@@ -71,11 +77,21 @@ public class QueueItem
     public int FailCount { get; set; }
 }
 
-/// <summary>Jeden stream z pole `strms` odpovědi /Play.</summary>
+/// <summary>
+/// Jeden stream z pole `strms` odpovědi /Play.
+/// POZOR: streamy NEMAJÍ přímý kra.sk ident — mají `url`, ze které se ident
+/// resolvuje druhým krokem (GET url → {version, vN} → "vN:hodnota"). Viz item.py.
+/// </summary>
 public class StreamOption
 {
     public int Index { get; set; }
+
+    /// <summary>Resolve URL streamu (katalogový endpoint) — z něj se získá kra.sk ident.</summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>Přímý kra.sk ident, pokud ho API pošle (starší tvar). Jinak prázdné.</summary>
     public string Ident { get; set; } = string.Empty;
+
     public string? Provider { get; set; }
     public string? Language { get; set; }
     public string? Quality { get; set; }
@@ -83,6 +99,19 @@ public class StreamOption
     public string? VideoInfo { get; set; }
     public string? AudioInfo { get; set; }
     public string? SubsUrl { get; set; }
+
+    // ── Metadata pro zobrazení a budoucí autoselect (z linfo/stream_info) ──
+    public long? SizeBytes { get; set; }
+    public long? Bitrate { get; set; }
+    public List<string> Languages { get; set; } = new();
+    public string? Codec { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    public bool Hdr { get; set; }
+    public bool Dv { get; set; }
+    public bool Atmos { get; set; }
+    public string? Group { get; set; }
+    public string? Source { get; set; }
 }
 
 /// <summary>Info o kra.sk účtu.</summary>

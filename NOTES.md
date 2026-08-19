@@ -58,8 +58,15 @@ Zdroj: `%APPDATA%\Kodi\addons\plugin.video.stream-cinema\resources\lib\`
 - **Hledání**: `GET /Search/search-movies?search=<dotaz>&id=search-movies` (filmy),
   `search-series` (seriály), `search-people` (+`ms=1`)
 - **Streamy**: `GET /Play/{id}` (film), `GET /Play/{id}/{sezona}/{epizoda}` (epizoda)
-  - odpověď obsahuje pole `strms`; každý stream: `ident`, `provider` (`kraska`),
-    `lang`, `quality`, `size`, `vinfo`, `ainfo`, `subs` (URL, ident za `/file/`)
+  - odpověď obsahuje pole `strms`; každý stream (OVĚŘENO proti item.py, v0.1.1):
+    `url` (**resolve URL — streamy NEMAJÍ přímý ident!**), `provider` (`kraska`),
+    `lang`, `quality` (SD/720p/1080p/4K/8K), `size` (**bajty**), `bitrate` (bps),
+    `vinfo`, `ainfo` (zobrazovací), `linfo` (pole jazyků audio stop),
+    `subs` (URL, ident za `/file/`), `stream_info` {`video`{codec,width,height},
+    `HDR`, `DV`, `Atmos`, `grp` (release group), `src` (zdroj)}
+  - **Resolve identu je dvoukrokový** (port `_get_resolve_data`): GET na `url`
+    streamu → odpověď `{version: N, vN: "..."}` → kra.sk ident = `"vN:hodnota"`
+    → teprve ten jde na `POST /api/file/download`
 - Odpovědi jsou „menu-driven" JSON pro Kodi (položky s `url`, `info`, `unique_ids`, `mediatype`).
   Parsovat **defenzivně** – přesné tvary ověřovat za běhu. Config stránka funguje jako
   generický prohlížeč: zobrazí, co API vrátí, a následuje `url` položek.

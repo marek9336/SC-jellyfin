@@ -130,7 +130,20 @@ public sealed class DownloadWorkerService : BackgroundService
                 }
             }
 
-            var url = await _state.Kraska.ResolveAsync(item.Ident, ct).ConfigureAwait(false);
+            // Ident: buď přímý (starší tvar), nebo dvoukrokově přes resolve URL streamu
+            // (GET katalogu → {version, vN} → "vN:hodnota"), viz ScCatalog.ResolveStreamIdentAsync.
+            var ident = item.Ident;
+            if (!string.IsNullOrWhiteSpace(item.StreamUrl))
+            {
+                ident = await _state.Catalog.ResolveStreamIdentAsync(item.StreamUrl, ct).ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(ident))
+            {
+                throw new KraskaException("Položka nemá ident ani resolve URL streamu");
+            }
+
+            var url = await _state.Kraska.ResolveAsync(ident, ct).ConfigureAwait(false);
             var extension = MediaOrganizer.ExtensionFromUrl(url);
             var finalPath = MediaOrganizer.BuildTargetPath(cfg.MoviesPath, cfg.SeriesPath, item, extension);
             var partPath = finalPath + ".part";

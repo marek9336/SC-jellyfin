@@ -346,12 +346,31 @@
                     return;
                 }
 
+                function badge(txt, color) {
+                    return '<span style="background:' + color + '; color:#fff; border-radius:3px; padding:0 .35em; font-size:.78em; margin-left:.3em;">' + txt + '</span>';
+                }
+
                 var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
                 data.streams.forEach(function (s, i) {
-                    html += '<div style="background:#2c2c2c; padding:.5em .8em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em;">'
-                        + '<span><strong>' + esc(s.language || '?') + '</strong> · ' + esc(s.quality || '?') + ' · ' + esc(s.sizeText || '?')
-                        + ' <span style="opacity:.6;">' + esc((s.videoInfo || '') + (s.audioInfo || '')) + '</span>'
-                        + (s.subsUrl ? ' · 💬 titulky' : '') + '</span>'
+                    var langs = (s.languages && s.languages.length) ? s.languages.join(', ').toUpperCase() : (s.language || '?');
+                    var tech = [];
+                    if (s.codec) tech.push(s.codec.toUpperCase());
+                    if (s.width && s.height) tech.push(s.width + '×' + s.height);
+                    if (s.bitrate) tech.push((s.bitrate / 1e6).toFixed(1) + ' Mbit/s');
+                    var badges = '';
+                    if (s.hdr) badges += badge('HDR', '#b8860b');
+                    if (s.dv) badges += badge('DV', '#5e35b1');
+                    if (s.atmos) badges += badge('Atmos', '#00695c');
+                    var extra = [];
+                    if (s.source) extra.push(s.source);
+                    if (s.group) extra.push(s.group);
+
+                    html += '<div style="background:#2c2c2c; padding:.5em .8em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
+                        + '<span><strong>' + esc(langs) + '</strong> · ' + esc(s.quality || '?') + ' · ' + esc(s.sizeText || '?')
+                        + badges
+                        + '<br><span style="opacity:.6; font-size:.85em;">' + esc(tech.join(' · '))
+                        + (extra.length ? ' · ' + esc(extra.join(' / ')) : '')
+                        + (s.subsUrl ? ' · 💬 titulky' : '') + '</span></span>'
                         + '<button is="emby-button" type="button" class="raised button-submit sc-add-btn" data-i="' + i + '" style="padding:.3em .9em;"><span>Stáhnout</span></button>'
                         + '</div>';
                 });
@@ -362,7 +381,8 @@
                     btn.addEventListener('click', function () {
                         var s = data.streams[parseInt(btn.getAttribute('data-i'), 10)];
                         var body = {
-                            Ident: s.ident,
+                            Ident: s.ident || null,
+                            StreamUrl: s.url || null,
                             Title: title,
                             Year: year,
                             MediaType: playInfo.isEpisode ? 'episode' : 'movie',
@@ -483,19 +503,26 @@
             });
         }
 
-        function saveConfig(e) {
-            e.preventDefault();
-            Dashboard.showLoadingMsg();
-            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        // Načte hodnoty z formuláře do configu a uloží. Vrací Promise.
+        // Test/Bootstrap ho volají PŘED voláním API, aby se testovaly aktuálně
+        // zadané údaje, ne jen naposledy uložené.
+        function persistConfig() {
+            return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                 cfgFields.forEach(function (f) {
                     var input = el('cfg' + f);
                     if (!input) return;
                     config[f] = input.type === 'number' ? parseInt(input.value || '0', 10) : input.value;
                 });
                 config.TriggerLibraryScan = el('cfgTriggerLibraryScan').checked;
-                ApiClient.updatePluginConfiguration(pluginId, config).then(function (result) {
-                    Dashboard.processPluginConfigurationUpdateResult(result);
-                });
+                return ApiClient.updatePluginConfiguration(pluginId, config);
+            });
+        }
+
+        function saveConfig(e) {
+            e.preventDefault();
+            Dashboard.showLoadingMsg();
+            persistConfig().then(function (result) {
+                Dashboard.processPluginConfigurationUpdateResult(result);
             });
             return false;
         }
@@ -557,20 +584,24 @@
         });
 
         el('scTestLoginBtn').addEventListener('click', function () {
-            el('scTestLoginResult').textContent = '…';
-            api('POST', 'TestLogin').then(function (r) {
+            el('scTestLoginResult').textContent = '… ukládám a testuji';
+            persistConfig().then(function () {
+                return api('POST', 'TestLogin');
+            }).then(function (r) {
                 el('scTestLoginResult').textContent = (r.success ? '✅ ' : '❌ ') + r.message;
             }, function () {
-                el('scTestLoginResult').textContent = '❌ Požadavek selhal (ulož nejdřív nastavení).';
+                el('scTestLoginResult').textContent = '❌ Požadavek selhal.';
             });
         });
 
         el('scBootstrapBtn').addEventListener('click', function () {
-            el('scBootstrapResult').textContent = '…';
-            api('POST', 'BootstrapToken').then(function (r) {
+            el('scBootstrapResult').textContent = '… ukládám a načítám';
+            persistConfig().then(function () {
+                return api('POST', 'BootstrapToken');
+            }).then(function (r) {
                 el('scBootstrapResult').textContent = (r.success ? '✅ ' : '❌ ') + r.message;
             }, function () {
-                el('scBootstrapResult').textContent = '❌ Požadavek selhal (ulož nejdřív nastavení).';
+                el('scBootstrapResult').textContent = '❌ Požadavek selhal.';
             });
         });
     })();
