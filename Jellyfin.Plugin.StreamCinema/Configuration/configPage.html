@@ -331,7 +331,21 @@
                 return;
             }
 
-            var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
+            // Výpis epizod (série): nabídnout hromadné zařazení do fronty přes autoselect.
+            // Worker pak stahuje díl po dílu s pauzami — anti-ban chování se nemění.
+            var episodeItems = items.filter(function (it) {
+                return it && it.url && parsePlayUrl(it.url).isEpisode;
+            });
+
+            var html = '';
+            if (episodeItems.length > 1) {
+                html += '<div style="display:flex; align-items:center; gap:.75em; flex-wrap:wrap; margin-bottom:.6em;">'
+                    + '<button is="emby-button" type="button" id="scSeasonBtn" class="raised button-submit" style="padding:.3em .9em;" title="Každý díl vybere autoselect podle priorit v nastavení. Stahuje se pak postupně díl po dílu s pauzami.">'
+                    + '<span>⚡ Celou sérii do fronty (' + episodeItems.length + ' dílů)</span></button>'
+                    + '<span id="scSeasonResult" style="font-size:.9em;"></span></div>';
+            }
+
+            html += '<div style="display:flex; flex-direction:column; gap:.4em;">';
             items.forEach(function (item, idx) {
                 if (!item || !item.url) return;
                 var title = itemTitle(item);
@@ -351,6 +365,54 @@
                     onItemClick(item, seriesTitle);
                 });
             });
+
+            var seasonBtn = container.querySelector('#scSeasonBtn');
+            if (seasonBtn) {
+                seasonBtn.addEventListener('click', function () {
+                    queueSeason(episodeItems, seriesTitle, seasonBtn, container.querySelector('#scSeasonResult'));
+                });
+            }
+        }
+
+        // Postupně (s malým odstupem) zařadí všechny epizody přes autoselect.
+        function queueSeason(episodes, seriesTitle, btn, resultEl) {
+            btn.disabled = true;
+            var ok = 0, fail = 0, failMsgs = [];
+
+            function finish() {
+                btn.disabled = false;
+                var txt = '✅ Ve frontě: ' + ok + '/' + episodes.length;
+                if (fail) {
+                    txt += ' · ❌ ' + fail + ' přeskočeno';
+                    if (failMsgs.length) txt += ' (' + failMsgs[0] + (failMsgs.length > 1 ? ', …' : '') + ')';
+                }
+                resultEl.textContent = txt;
+            }
+
+            function next(idx) {
+                if (idx >= episodes.length) { finish(); return; }
+                resultEl.textContent = '… zařazuji ' + (idx + 1) + '/' + episodes.length;
+                var it = episodes[idx];
+                var pi = parsePlayUrl(it.url);
+                api('POST', 'QueueAuto', {
+                    Path: it.url,
+                    Title: itemTitle(it),
+                    Year: itemYear(it),
+                    MediaType: 'episode',
+                    SeriesTitle: seriesTitle || itemTitle(it),
+                    Season: pi.season,
+                    Episode: pi.episode
+                }).then(function (r) {
+                    if (r.success) { ok++; } else { fail++; if (r.error) failMsgs.push('S' + pi.season + 'E' + pi.episode + ': ' + r.error); }
+                }, function () {
+                    fail++;
+                }).then(function () {
+                    // malý odstup mezi dotazy na katalog — chovat se jako člověk
+                    setTimeout(function () { next(idx + 1); }, 500);
+                });
+            }
+
+            next(0);
         }
 
         function updateBreadcrumb() {

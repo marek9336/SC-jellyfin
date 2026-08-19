@@ -113,11 +113,14 @@ public sealed class DownloadQueue
     {
         lock (_lock)
         {
-            // Duplicitní ident ve frontě nemá smysl
-            if (_state.Items.Any(i => i.Ident == item.Ident
+            // Duplicitní stream ve frontě nemá smysl. Klíč = Ident, jinak StreamUrl
+            // (položky z autoselectu mají Ident prázdný — nesmí se dedupovat mezi sebou!)
+            var key = string.IsNullOrEmpty(item.Ident) ? item.StreamUrl : item.Ident;
+            if (!string.IsNullOrEmpty(key) && _state.Items.Any(i =>
+                (string.IsNullOrEmpty(i.Ident) ? i.StreamUrl : i.Ident) == key
                 && i.Status is QueueItemStatus.Queued or QueueItemStatus.Downloading or QueueItemStatus.Done))
             {
-                _log($"queue: ident už ve frontě je, přeskakuji ({item.Title})");
+                _log($"queue: stream už ve frontě je, přeskakuji ({item.Title})");
                 return;
             }
 
