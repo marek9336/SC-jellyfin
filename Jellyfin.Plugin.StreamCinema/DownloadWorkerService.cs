@@ -255,6 +255,18 @@ public sealed class DownloadWorkerService : BackgroundService
             });
             status.LastMessage = "Stahování zastaveno uživatelem";
         }
+        catch (KraskaPermanentException ex)
+        {
+            // Trvalá chyba (vadný/šifrovaný ident) — žádné opakování, rovnou Error.
+            _logger.LogWarning("StreamCinema: \"{Title}\" — trvalá chyba, neopakuji: {Msg}", DisplayTitle(item), ex.Message);
+            _state.Queue.Update(item.Id, i =>
+            {
+                i.Status = QueueItemStatus.Error;
+                i.ErrorMessage = ex.Message;
+                i.ForceNow = false;
+            });
+            status.LastMessage = $"Chyba: {ex.Message}";
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "StreamCinema: stahování \"{Title}\" selhalo", DisplayTitle(item));

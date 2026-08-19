@@ -25,6 +25,17 @@ public class ScController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>DIAGNOSTIKA: zaloguje celý první stream (hledáme, zda ident nekape nešifrovaně jinde).</summary>
+    private void LogFirstStream(System.Text.Json.JsonDocument doc)
+    {
+        if (doc.RootElement.TryGetProperty("strms", out var strms)
+            && strms.ValueKind == System.Text.Json.JsonValueKind.Array
+            && strms.GetArrayLength() > 0)
+        {
+            _logger.LogInformation("StreamCinema: strms[0] plný objekt: {Json}", strms[0].GetRawText());
+        }
+    }
+
     /// <summary>Test přihlášení ke kra.sk + info o předplatném.</summary>
     [HttpPost("TestLogin")]
     public async Task<ActionResult> TestLogin(CancellationToken ct)
@@ -132,6 +143,8 @@ public class ScController : ControllerBase
                 }
             }
 
+            LogFirstStream(doc);
+
             var streams = ScCatalog.ParseStreams(doc).Select(s => new
             {
                 index = s.Index,
@@ -207,6 +220,7 @@ public class ScController : ControllerBase
         try
         {
             using var doc = await _state.Catalog.GetAsync(request.Path, null, ct).ConfigureAwait(false);
+            LogFirstStream(doc);
             var streams = ScCatalog.ParseStreams(doc);
             if (streams.Count == 0)
             {

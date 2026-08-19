@@ -126,6 +126,16 @@ public sealed class KraskaClient
             // jiný tvar / endpoint / helper.
             LastError = DescribeError(data, "resolve bez odkazu");
             _log($"kra: resolve selhal (pokus {attempt + 1}) — {LastError}; odpověď: {(data?.GetRawText() ?? "null")}");
+
+            // Trvalé chyby (vadný/šifrovaný ident) NEMÁ smysl opakovat ani re-loginovat —
+            // šetří requesty (anti-ban). Session je platná, chyba je v identu.
+            var code = data != null && data.Value.TryGetProperty("error", out var e) && e.TryGetInt32(out var ec) ? ec : 0;
+            if (code is 1207) // invalid ident
+            {
+                throw new KraskaPermanentException($"kra.sk odmítl ident jako neplatný (kód {code}). "
+                    + "Stream používá šifrovaný resolve (helper Stream Cinema) — přímé stažení není možné.");
+            }
+
             InvalidateSession();
         }
 
@@ -268,6 +278,18 @@ public sealed class KraskaClient
 public class KraskaException : Exception
 {
     public KraskaException(string message)
+        : base(message)
+    {
+    }
+}
+
+/// <summary>
+/// Trvalá chyba, kterou nemá smysl opakovat (vadný/šifrovaný ident, neexistující soubor).
+/// Worker položku rovnou označí Chyba — žádné retry ani re-login (anti-ban).
+/// </summary>
+public sealed class KraskaPermanentException : KraskaException
+{
+    public KraskaPermanentException(string message)
         : base(message)
     {
     }
