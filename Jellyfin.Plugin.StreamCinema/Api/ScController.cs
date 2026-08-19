@@ -152,6 +152,71 @@ public class ScController : ControllerBase
         return Ok(new { success = true, id = item.Id });
     }
 
+    /// <summary>
+    /// ⚡ Automatický výběr: načte streamy z /Play/..., vybere nejlepší podle
+    /// priorit v nastavení (jazyk → kvalita/velikost → kodek → HDR/DV/Atmos)
+    /// a rovnou ho zařadí do fronty. Vrací popis vybraného streamu.
+    /// </summary>
+    [HttpPost("QueueAuto")]
+    public async Task<ActionResult> QueueAuto([FromBody] QueueAutoRequest request, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await _state.Catalog.GetAsync(request.Path, null, ct).ConfigureAwait(false);
+            var streams = ScCatalog.ParseStreams(doc);
+            if (streams.Count == 0)
+            {
+                return Ok(new { error = "Žádné streamy k dispozici." });
+            }
+
+            var cfg = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+            var options = new StreamSelectorOptions
+            {
+                Lang1 = cfg.PreferredLang1,
+                Lang2 = cfg.PreferredLang2,
+                Lang3 = cfg.PreferredLang3,
+                SkipWithoutPreferredLang = cfg.SkipWithoutPreferredLang,
+                MaxQuality = cfg.MaxQuality,
+                MaxFileSizeGb = cfg.MaxFileSizeGb,
+                CodecPreference = cfg.CodecPreference,
+                HdrMode = cfg.HdrMode,
+                DvMode = cfg.DvMode,
+                AtmosMode = cfg.AtmosMode,
+            };
+
+            var (best, reason) = StreamSelector.SelectBest(streams, options);
+            if (best == null)
+            {
+                return Ok(new { error = "Autoselect: " + reason });
+            }
+
+            var item = new QueueItem
+            {
+                Title = request.Title ?? "Neznámý",
+                Year = request.Year,
+                MediaType = request.MediaType == "episode" ? ScMediaType.Episode : ScMediaType.Movie,
+                SeriesTitle = request.SeriesTitle,
+                Season = request.Season,
+                Episode = request.Episode,
+                Ident = best.Ident,
+                StreamUrl = best.Url,
+                SubsUrl = best.SubsUrl,
+                Quality = best.Quality,
+                Language = best.Languages.Count > 0 ? string.Join(",", best.Languages) : best.Language,
+                SizeText = best.SizeText,
+            };
+
+            _state.Queue.Add(item);
+            _logger.LogInformation("StreamCinema: autoselect \"{Title}\" → {Reason}", item.Title, reason);
+            return Ok(new { success = true, id = item.Id, picked = reason });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "StreamCinema: QueueAuto {Path} selhal", request.Path);
+            return Ok(new { error = ex.Message });
+        }
+    }
+
     /// <summary>Obsah fronty.</summary>
     [HttpGet("Queue")]
     public ActionResult GetQueue()
@@ -228,6 +293,25 @@ public class SearchRequest
 
     /// <summary>"movies" | "series".</summary>
     public string Type { get; set; } = "movies";
+}
+
+public class QueueAutoRequest
+{
+    [Required]
+    public string Path { get; set; } = string.Empty;
+
+    public string? Title { get; set; }
+
+    public int? Year { get; set; }
+
+    /// <summary>"movie" | "episode".</summary>
+    public string? MediaType { get; set; }
+
+    public string? SeriesTitle { get; set; }
+
+    public int? Season { get; set; }
+
+    public int? Episode { get; set; }
 }
 
 public class AddQueueRequest

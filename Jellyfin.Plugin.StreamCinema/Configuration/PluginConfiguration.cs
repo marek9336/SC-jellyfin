@@ -34,6 +34,35 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string UserAgent { get; set; } = "Kodi/21.2 (Windows NT 10.0; Win64; x64) App_Bitness/64 (cs; ver2.0)";
 
+    // ── Automatický výběr streamu (⚡ Stáhnout auto + budoucí Trakt watcher) ──
+    /// <summary>Jazyk s nejvyšší prioritou (porovnává se s linfo streamu, např. CZ).</summary>
+    public string PreferredLang1 { get; set; } = "CZ";
+
+    public string PreferredLang2 { get; set; } = "EN";
+
+    public string PreferredLang3 { get; set; } = "SK";
+
+    /// <summary>Když stream nemá žádný z preferovaných jazyků: true = nestahovat, false = vzít cokoliv.</summary>
+    public bool SkipWithoutPreferredLang { get; set; }
+
+    /// <summary>Maximální kvalita (SD/720p/1080p/4K/8K, "-" = bez limitu). Vyšší kvalita se vyřadí.</summary>
+    public string MaxQuality { get; set; } = "4K";
+
+    /// <summary>Maximální velikost souboru v GB (0 = bez limitu). Větší soubory se vyřadí.</summary>
+    public int MaxFileSizeGb { get; set; } = 30;
+
+    /// <summary>Preferované video kodeky oddělené |, první = nejvyšší priorita.</summary>
+    public string CodecPreference { get; set; } = "hevc|h264|av1";
+
+    /// <summary>HDR: "prefer" | "ignore" | "avoid".</summary>
+    public string HdrMode { get; set; } = "prefer";
+
+    /// <summary>Dolby Vision: "prefer" | "ignore" | "avoid".</summary>
+    public string DvMode { get; set; } = "avoid";
+
+    /// <summary>Dolby Atmos: "prefer" | "ignore" | "avoid".</summary>
+    public string AtmosMode { get; set; } = "prefer";
+
     // ── Cílové cesty (uvnitř Jellyfin kontejneru!) ────────────────
     public string MoviesPath { get; set; } = "/media/movies";
 

@@ -18,3 +18,6 @@ Thumbs.db
 # NIKDY necommitovat lokální konfiguraci s údaji
 *.local.json
 secrets.*
+
+# Repo je soukromé použití — bez veřejné vizitky (lokální kopie zůstává)
+README.md

@@ -50,7 +50,11 @@
 
                 <!-- Výběr streamu -->
                 <div id="scStreamPicker" class="hide" style="margin-top:1em; background:#202020; padding:1em; border-radius:4px;">
-                    <h3 id="scStreamPickerTitle" style="margin-top:0;"></h3>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">
+                        <h3 id="scStreamPickerTitle" style="margin:0;"></h3>
+                        <button is="emby-button" type="button" id="scAutoBtn" class="raised button-submit" style="padding:.3em .9em;"><span>⚡ Stáhnout auto</span></button>
+                    </div>
+                    <div id="scAutoResult" style="margin:.5em 0; font-size:.9em;"></div>
                     <div id="scStreamList"></div>
                     <button is="emby-button" type="button" id="scStreamCancel" class="raised" style="margin-top:.75em;"><span>Zavřít</span></button>
                 </div>
@@ -95,6 +99,68 @@
                     <span id="scBootstrapResult" style="margin-left:.75em;"></span>
                     <div class="inputContainer" style="margin-top:.75em;">
                         <input is="emby-input" type="text" id="cfgManualAuthToken" label="Ruční token (32 znaků, má přednost)" autocomplete="off" />
+                    </div>
+
+                    <h2 style="margin-top:1.5em;">Automatický výběr streamu (⚡ Stáhnout auto)</h2>
+                    <div class="fieldDescription" style="margin-bottom:.75em;">
+                        Pravidla pro tlačítko „⚡ Stáhnout auto" a budoucí automatické stahování.
+                        Jazyk je dominantní — stream s preferovaným jazykem vždy porazí kvalitu.
+                        Kvalita a velikost jsou tvrdé limity (co je nad, vyřadí se).
+                    </div>
+                    <div style="display:flex; gap:.75em; flex-wrap:wrap;">
+                        <div class="inputContainer" style="flex:1; min-width:110px;">
+                            <input is="emby-input" type="text" id="cfgPreferredLang1" label="Jazyk 1 (např. CZ)" />
+                        </div>
+                        <div class="inputContainer" style="flex:1; min-width:110px;">
+                            <input is="emby-input" type="text" id="cfgPreferredLang2" label="Jazyk 2" />
+                        </div>
+                        <div class="inputContainer" style="flex:1; min-width:110px;">
+                            <input is="emby-input" type="text" id="cfgPreferredLang3" label="Jazyk 3" />
+                        </div>
+                    </div>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" id="cfgSkipWithoutPreferredLang" />
+                        <span>Bez preferovaného jazyka nestahovat (jinak se vezme cokoliv)</span>
+                    </label>
+                    <div class="selectContainer">
+                        <select is="emby-select" id="cfgMaxQuality" label="Maximální kvalita">
+                            <option value="720p">720p</option>
+                            <option value="1080p">1080p</option>
+                            <option value="4K">4K</option>
+                            <option value="8K">8K</option>
+                            <option value="-">Bez limitu</option>
+                        </select>
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgMaxFileSizeGb" label="Max velikost souboru (GB, 0 = bez limitu)" min="0" />
+                        <div class="fieldDescription">Např. 30 → 150GB remux prohraje, 20GB 4K web-dl vyhraje.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="text" id="cfgCodecPreference" label="Preferované kodeky (oddělené |, první = nejlepší)" />
+                        <div class="fieldDescription">Např. <code>hevc|h264|av1</code> — kdo chce starší formát kvůli kompatibilitě, dá <code>h264|hevc</code>.</div>
+                    </div>
+                    <div style="display:flex; gap:.75em; flex-wrap:wrap;">
+                        <div class="selectContainer" style="flex:1; min-width:140px;">
+                            <select is="emby-select" id="cfgHdrMode" label="HDR">
+                                <option value="prefer">Preferovat</option>
+                                <option value="ignore">Neřešit</option>
+                                <option value="avoid">Vyhnout se</option>
+                            </select>
+                        </div>
+                        <div class="selectContainer" style="flex:1; min-width:140px;">
+                            <select is="emby-select" id="cfgDvMode" label="Dolby Vision">
+                                <option value="prefer">Preferovat</option>
+                                <option value="ignore">Neřešit</option>
+                                <option value="avoid">Vyhnout se</option>
+                            </select>
+                        </div>
+                        <div class="selectContainer" style="flex:1; min-width:140px;">
+                            <select is="emby-select" id="cfgAtmosMode" label="Dolby Atmos">
+                                <option value="prefer">Preferovat</option>
+                                <option value="ignore">Neřešit</option>
+                                <option value="avoid">Vyhnout se</option>
+                            </select>
+                        </div>
                     </div>
 
                     <h2 style="margin-top:1.5em;">Cílové složky (cesty uvnitř Jellyfin kontejneru)</h2>
@@ -337,8 +403,29 @@
 
             el('scStreamPickerTitle').textContent = title + (year ? ' (' + year + ')' : '');
             el('scStreamList').innerHTML = '<p>Načítám streamy…</p>';
+            el('scAutoResult').textContent = '';
             picker.classList.remove('hide');
             picker.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            // ⚡ Auto výběr podle priorit v nastavení (onclick = nepřilepovat další listenery)
+            el('scAutoBtn').onclick = function () {
+                el('scAutoResult').textContent = '… vybírám podle priorit';
+                api('POST', 'QueueAuto', {
+                    Path: item.url,
+                    Title: title,
+                    Year: year,
+                    MediaType: playInfo.isEpisode ? 'episode' : 'movie',
+                    SeriesTitle: playInfo.isEpisode ? (seriesTitle || title) : null,
+                    Season: playInfo.season,
+                    Episode: playInfo.episode
+                }).then(function (r) {
+                    el('scAutoResult').innerHTML = r.success
+                        ? '<span style="color:#4caf50;">✅ Ve frontě: ' + esc(r.picked) + '</span>'
+                        : '<span style="color:#e57373;">❌ ' + esc(r.error || 'Autoselect selhal.') + '</span>';
+                }, function () {
+                    el('scAutoResult').innerHTML = '<span style="color:#e57373;">❌ Požadavek selhal.</span>';
+                });
+            };
 
             api('POST', 'Streams', { Path: item.url, Params: null }).then(function (data) {
                 if (data.error || !data.streams || !data.streams.length) {
@@ -490,7 +577,10 @@
         var cfgFields = [
             'KraskaUsername', 'KraskaPassword', 'ManualAuthToken', 'MoviesPath', 'SeriesPath',
             'PauseMinMinutes', 'PauseMaxMinutes', 'SpeedLimitMbps', 'DailyCapGb',
-            'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent'
+            'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent',
+            'PreferredLang1', 'PreferredLang2', 'PreferredLang3',
+            'MaxQuality', 'MaxFileSizeGb', 'CodecPreference',
+            'HdrMode', 'DvMode', 'AtmosMode'
         ];
 
         function loadConfig() {
@@ -500,6 +590,7 @@
                     if (input) input.value = config[f] != null ? config[f] : '';
                 });
                 el('cfgTriggerLibraryScan').checked = !!config.TriggerLibraryScan;
+                el('cfgSkipWithoutPreferredLang').checked = !!config.SkipWithoutPreferredLang;
             });
         }
 
@@ -514,6 +605,7 @@
                     config[f] = input.type === 'number' ? parseInt(input.value || '0', 10) : input.value;
                 });
                 config.TriggerLibraryScan = el('cfgTriggerLibraryScan').checked;
+                config.SkipWithoutPreferredLang = el('cfgSkipWithoutPreferredLang').checked;
                 return ApiClient.updatePluginConfiguration(pluginId, config);
             });
         }

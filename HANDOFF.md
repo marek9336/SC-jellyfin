@@ -144,10 +144,13 @@ git push origin v0.1.0
 - [x] GUI: configPage.html (hledání, výběr streamu, fronta, nastavení) + REST API
 - [x] GitHub Actions (build + release + manifest)
 - [x] **Build OK** (net9.0, Jellyfin.Controller 10.11.11, 0 chyb/0 varování)
-- [x] Lokální git repo + 1. commit
-- [ ] **Push na GitHub** *(na tobě — §4)*
-- [ ] **Reálný test na JF 10.11.11** + doladění parsování katalogu na živá data
-- [ ] **Fáze 2: Trakt watcher** — automatické stahování z Trakt seznamu
+- [x] Push na GitHub (repo **public** kvůli Actions minutám a manifest raw URL; README záměrně smazané z gitu)
+- [x] v0.1.0 vydáno; **v0.1.1**: oprava parsování `strms` (streamy mají `url`, ne `ident`!) + dvoukrokový resolve + UX oprava TestLogin (auto-uloží formulář)
+- [x] Test na JF 10.11.11: ✅ login, ✅ token bootstrap, ✅ hledání; streamy opraveny v0.1.1
+- [x] **v0.2.0**: autoselect podle priorit (jazyky CZ→EN→SK default, max kvalita, max GB, kodeky, HDR/DV/Atmos) + tlačítko „⚡ Stáhnout auto"
+- [ ] **Otestovat stahování end-to-end** (fronta → resolve → soubor na NAS → sken)
+- [ ] **Fáze 2: Trakt watcher** — automatické stahování z Trakt seznamu (použije stejný StreamSelector)
+- ⚠️ Pozn.: git ops nejdou přímo z Nextcloud složky (mmap chyba na virtuálních souborech) — pushovat z lokální kopie mimo Nextcloud
 
 ---
 
