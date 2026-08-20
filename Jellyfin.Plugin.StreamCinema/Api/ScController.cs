@@ -381,6 +381,16 @@ public class ScController : ControllerBase
         return Ok(new { success = _state.Queue.ForceNow(id) });
     }
 
+    /// <summary>
+    /// ↻ „Stáhnout znovu" — vrátí položku z historie do fronty; existující soubor
+    /// se při stažení přepíše.
+    /// </summary>
+    [HttpPost("Queue/{id}/Redownload")]
+    public ActionResult RedownloadQueueItem([FromRoute] Guid id)
+    {
+        return Ok(new { success = _state.Queue.Redownload(id) });
+    }
+
     /// <summary>Posun položky ve frontě nahoru (▲) / dolů (▼) — ruční priorita.</summary>
     [HttpPost("Queue/{id}/Move/{direction}")]
     public ActionResult MoveQueueItem([FromRoute] Guid id, [FromRoute] string direction)

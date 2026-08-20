@@ -93,6 +93,54 @@ public static class MediaOrganizer
         return Path.Combine(dir, $"{baseName}.{code}.srt");
     }
 
+    /// <summary>
+    /// Najde už stažený soubor pro položku (jakákoli kvalita/jazyk/přípona) — aby se
+    /// nestahovalo, co na disku je. Hledá podle základu názvu bez tagu „[kvalita jazyk]".
+    /// Ignoruje nedokončené .part. Vrací cestu, nebo null.
+    /// </summary>
+    public static string? FindExisting(string moviesPath, string seriesPath, QueueItem item)
+    {
+        try
+        {
+            string dir;
+            string baseName;
+
+            if (item.MediaType == ScMediaType.Episode)
+            {
+                var clean = CleanTitle(item.SeriesTitle ?? item.Title);
+                var season = item.Season ?? 1;
+                dir = Path.Combine(seriesPath, Sanitize(clean), $"Season {season:D2}");
+                baseName = Sanitize($"{FormatTitle(clean, item.Year)} - S{season:D2}E{item.Episode ?? 1:D2}");
+            }
+            else
+            {
+                var movie = Sanitize(FormatTitle(CleanTitle(item.Title), item.Year));
+                dir = Path.Combine(moviesPath, movie);
+                baseName = movie;
+            }
+
+            if (!Directory.Exists(dir))
+            {
+                return null;
+            }
+
+            foreach (var f in Directory.EnumerateFiles(dir, baseName + "*"))
+            {
+                if (!f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
+                    && !f.EndsWith(".srt", StringComparison.OrdinalIgnoreCase))
+                {
+                    return f;
+                }
+            }
+
+            return null;
+        }
+        catch (Exception)
+        {
+            return null; // nedostupná cesta apod. — raději stáhnout, než spadnout
+        }
+    }
+
     /// <summary>Přípona z URL kra.sk (fallback .mkv).</summary>
     public static string ExtensionFromUrl(string url)
     {

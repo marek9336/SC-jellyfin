@@ -137,6 +137,28 @@ public sealed class DownloadWorkerService : BackgroundService
             return;
         }
 
+        // Už staženo? Nestahovat znovu (šetří objem = anti-ban). Tlačítko ↻ v historii
+        // nastaví Overwrite a tím se kontrola přeskočí a soubor se přepíše.
+        if (!item.Overwrite)
+        {
+            var existing = MediaOrganizer.FindExisting(cfg.MoviesPath, cfg.SeriesPath, item);
+            if (existing != null)
+            {
+                _logger.LogInformation(
+                    "StreamCinema: \"{Title}\" už existuje ({Path}) — přeskakuji", DisplayTitle(item), existing);
+                _state.Queue.Update(item.Id, i =>
+                {
+                    i.Status = QueueItemStatus.Skipped;
+                    i.TargetPath = existing;
+                    i.CompletedUtc = DateTime.UtcNow;
+                    i.ErrorMessage = "Soubor už je v knihovně (↻ stáhne znovu a přepíše)";
+                    i.ForceNow = false;
+                });
+                status.LastMessage = $"Přeskočeno (už staženo): {DisplayTitle(item)}";
+                return;
+            }
+        }
+
         // ── Stahování ─────────────────────────────────────────────
 
         _state.Queue.Update(item.Id, i => i.Status = QueueItemStatus.Downloading);

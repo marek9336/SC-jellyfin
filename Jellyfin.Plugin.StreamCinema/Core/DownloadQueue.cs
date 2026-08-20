@@ -109,6 +109,40 @@ public sealed class DownloadQueue
         }
     }
 
+    /// <summary>
+    /// „Stáhnout znovu": vrátí hotovou/přeskočenou položku zpět do fronty (na konec)
+    /// a nastaví Overwrite — nepřeskočí se kvůli existujícímu souboru a ten se přepíše.
+    /// </summary>
+    public bool Redownload(Guid id)
+    {
+        bool ok;
+        lock (_lock)
+        {
+            var item = _state.Items.FirstOrDefault(i => i.Id == id
+                && i.Status is QueueItemStatus.Done or QueueItemStatus.Skipped or QueueItemStatus.Error);
+            if (item == null)
+            {
+                return false;
+            }
+
+            item.Status = QueueItemStatus.Queued;
+            item.Overwrite = true;
+            item.ErrorMessage = null;
+            item.CompletedUtc = null;
+            item.TargetPath = null;
+            item.BytesDone = 0;
+            item.FailCount = 0;
+            item.ForceNow = false;
+            item.SortIndex = _state.Items.Count > 0 ? _state.Items.Max(i => i.SortIndex) + 1 : 0;
+            SaveLocked();
+            ok = true;
+            _log($"queue: \"{item.Title}\" znovu zařazeno (přepíše existující soubor)");
+        }
+
+        Wake();
+        return ok;
+    }
+
     /// <summary>Posun položky ve frontě nahoru/dolů (ruční priorita). Vrací true při změně.</summary>
     public bool Move(Guid id, bool up)
     {

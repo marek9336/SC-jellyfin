@@ -795,7 +795,8 @@
                         + '<span>' + esc(name) + ' <span style="opacity:.6;">' + esc(i.quality || '') + ' ' + esc(i.sizeText || '') + '</span><br>'
                         + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + forceBadge + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span>'
                         + '<span style="display:flex; gap:.4em;">'
-                        + (stKey === 'Queued' && !i.forceNow ? '<button is="emby-button" type="button" class="raised sc-up" data-id="' + i.id + '" style="padding:.2em .5em;" title="Nahoru ve frontě"><span>▲</span></button><button is="emby-button" type="button" class="raised sc-down" data-id="' + i.id + '" style="padding:.2em .5em;" title="Dolů ve frontě"><span>▼</span></button>' : '')
+                        + (stKey === 'Queued' ? '<button is="emby-button" type="button" class="raised sc-up" data-id="' + i.id + '" style="padding:.2em .5em;" title="Nahoru ve frontě"><span>▲</span></button><button is="emby-button" type="button" class="raised sc-down" data-id="' + i.id + '" style="padding:.2em .5em;" title="Dolů ve frontě"><span>▼</span></button>' : '')
+                        + (stKey === 'Done' || stKey === 'Skipped' ? '<button is="emby-button" type="button" class="raised sc-redl" data-id="' + i.id + '" style="padding:.2em .7em;" title="Smaže z historie, zařadí znovu do fronty a existující soubor přepíše"><span>↻ Stáhnout znovu</span></button>' : '')
                         + (canForce ? '<button is="emby-button" type="button" class="raised button-submit sc-force" data-id="' + i.id + '" style="padding:.2em .7em;" title="Obejde časové okno a pauzy; denní limit a volné místo platí dál"><span>▶ Teď</span></button>' : '')
                         + (stKey === 'Downloading' ? '<button is="emby-button" type="button" class="raised sc-stop" data-id="' + i.id + '" style="padding:.2em .7em;" title="Zastaví přenos, položka se vrátí do fronty; stažená část zůstane a naváže se"><span>⏹ Zastavit</span></button>' : '')
                         + (stKey === 'Error' ? '<button is="emby-button" type="button" class="raised sc-retry" data-id="' + i.id + '" style="padding:.2em .7em;"><span>↻ Znovu</span></button>' : '')
@@ -808,6 +809,11 @@
                 el('scQueueList').querySelectorAll('.sc-remove').forEach(function (b) {
                     b.addEventListener('click', function () {
                         api('DELETE', 'Queue/' + b.getAttribute('data-id')).then(refreshQueue);
+                    });
+                });
+                el('scQueueList').querySelectorAll('.sc-redl').forEach(function (b) {
+                    b.addEventListener('click', function () {
+                        api('POST', 'Queue/' + b.getAttribute('data-id') + '/Redownload').then(refreshQueue);
                     });
                 });
                 el('scQueueList').querySelectorAll('.sc-up').forEach(function (b) {

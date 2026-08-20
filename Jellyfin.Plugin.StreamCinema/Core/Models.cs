@@ -90,6 +90,12 @@ public class QueueItem
     /// Při zařazení se dá na konec fronty.
     /// </summary>
     public long SortIndex { get; set; }
+
+    /// <summary>
+    /// „Stáhnout znovu": nepřeskakovat kvůli existujícímu souboru a případný
+    /// existující soubor přepsat. Nastavuje tlačítko ↻ v historii.
+    /// </summary>
+    public bool Overwrite { get; set; }
 }
 
 /// <summary>
