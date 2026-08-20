@@ -191,7 +191,7 @@ public static class StreamSelector
             : (s.Language ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries);
 
         var set = new HashSet<string>(
-            langs.Select(x => x.Trim().ToLowerInvariant().Replace("+tit", string.Empty, StringComparison.Ordinal)));
+            langs.Select(x => Norm(x.Replace("+tit", string.Empty, StringComparison.OrdinalIgnoreCase))));
 
         if (Match(set, o.Lang1))
         {
@@ -211,7 +211,14 @@ public static class StreamSelector
         return 0;
 
         static bool Match(HashSet<string> set, string lang) =>
-            !string.IsNullOrWhiteSpace(lang) && set.Contains(lang.Trim().ToLowerInvariant());
+            !string.IsNullOrWhiteSpace(lang) && set.Contains(Norm(lang));
+    }
+
+    /// <summary>Normalizace jazykového kódu: SC používá "cz", ISO je "cs" → sjednotit.</summary>
+    private static string Norm(string lang)
+    {
+        var l = lang.Trim().ToLowerInvariant();
+        return l == "cs" ? "cz" : l;
     }
 
     /// <summary>Stream má titulky: buď URL titulků, nebo jazyková varianta s "+tit".</summary>
