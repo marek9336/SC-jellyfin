@@ -15,6 +15,14 @@ public sealed class ScCatalog
     public const string ApiVersion = "2.0";
     public const string BackupFileName = "sc.json";
 
+    /// <summary>Statické menu katalogu (root, kategorie, seznamy) — veřejné, bez tokenu.</summary>
+    public const string StaticMenuUrl = "https://stream-cinema.online/menu.0.json";
+
+    private static readonly TimeSpan StaticMenuTtl = TimeSpan.FromHours(24);
+    private static readonly SemaphoreSlim StaticMenuLock = new(1, 1);
+    private static Dictionary<string, JsonElement>? _staticMenu;
+    private static DateTime _staticMenuLoaded = DateTime.MinValue;
+
     private readonly HttpClient _http;
     private readonly Action<string> _log;
     private readonly Func<string> _tokenProvider;
@@ -117,6 +125,78 @@ public sealed class ScCatalog
         resp.EnsureSuccessStatusCode();
         var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         return JsonDocument.Parse(text);
+    }
+
+    /// <summary>
+    /// Menu pro cestu — procházení katalogu (root "/", kategorie, seznamy).
+    /// Nejdřív statická cache (veřejná, bez tokenu), jinak živé API.
+    /// Vrací surový JSON; volající ho renderuje jako menu.
+    /// </summary>
+    public async Task<JsonDocument> GetMenuAsync(string path, CancellationToken ct)
+    {
+        path = string.IsNullOrWhiteSpace(path) ? "/" : path;
+        var cache = await GetStaticMenuAsync(ct).ConfigureAwait(false);
+        if (cache != null && cache.TryGetValue(path, out var node))
+        {
+            return JsonDocument.Parse(node.GetRawText());
+        }
+
+        return await GetAsync(path, null, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Je cesta ve statickém menu? (→ nepotřebuje token)</summary>
+    public async Task<bool> IsStaticAsync(string path, CancellationToken ct)
+    {
+        var cache = await GetStaticMenuAsync(ct).ConfigureAwait(false);
+        return cache != null && cache.ContainsKey(string.IsNullOrWhiteSpace(path) ? "/" : path);
+    }
+
+    private async Task<Dictionary<string, JsonElement>?> GetStaticMenuAsync(CancellationToken ct)
+    {
+        if (_staticMenu != null && DateTime.UtcNow - _staticMenuLoaded < StaticMenuTtl)
+        {
+            return _staticMenu;
+        }
+
+        await StaticMenuLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_staticMenu != null && DateTime.UtcNow - _staticMenuLoaded < StaticMenuTtl)
+            {
+                return _staticMenu;
+            }
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, StaticMenuUrl);
+            req.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(text);
+            var map = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                map[prop.Name] = prop.Value.Clone();
+            }
+
+            _staticMenu = map;
+            _staticMenuLoaded = DateTime.UtcNow;
+            _log($"sc: statické menu načteno ({map.Count} cest)");
+            return _staticMenu;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log($"sc: statické menu se nepodařilo načíst: {ex.Message}");
+            return _staticMenu;
+        }
+        finally
+        {
+            StaticMenuLock.Release();
+        }
     }
 
     /// <summary>Fulltext hledání. type = "search-movies" | "search-series".</summary>

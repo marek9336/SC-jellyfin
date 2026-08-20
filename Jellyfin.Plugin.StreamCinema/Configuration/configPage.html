@@ -40,6 +40,9 @@
                     <button is="emby-button" type="button" id="scSearchBtn" class="raised button-submit" style="margin-bottom:.2em;">
                         <span>Hledat</span>
                     </button>
+                    <button is="emby-button" type="button" id="scBrowseBtn" class="raised" style="margin-bottom:.2em;" title="Procházet katalog — kategorie, žebříčky a seznamy (Marvel, Netflix, HBO…)">
+                        <span>📚 Procházet</span>
+                    </button>
                 </div>
 
                 <div id="scBreadcrumb" style="margin:.75em 0;" class="hide">
@@ -403,12 +406,26 @@
                 return it && it.url && parsePlayUrl(it.url).isEpisode;
             });
 
+            // Seznamy (MARVEL, Netflix…): hromadné akce nad filmy/seriály (ne kategoriemi)
+            var bulkItems = items.filter(function (it) {
+                return isContent(it) && !parsePlayUrl(it.url).isEpisode;
+            });
+
             var html = '';
             if (episodeItems.length > 1) {
                 html += '<div style="display:flex; align-items:center; gap:.75em; flex-wrap:wrap; margin-bottom:.6em;">'
                     + '<button is="emby-button" type="button" id="scSeasonBtn" class="raised button-submit" style="padding:.3em .9em;" title="Každý díl vybere autoselect podle priorit v nastavení. Stahuje se pak postupně díl po dílu s pauzami.">'
                     + '<span>⚡ Celou sérii do fronty (' + episodeItems.length + ' dílů)</span></button>'
                     + '<span id="scSeasonResult" style="font-size:.9em;"></span></div>';
+            } else if (bulkItems.length > 1) {
+                var filmItems = bulkItems.filter(function (it) { return String(it.url).indexOf('/Play/') === 0; });
+                html += '<div style="display:flex; align-items:center; gap:.5em; flex-wrap:wrap; margin-bottom:.6em;">'
+                    + '<span style="opacity:.75;">Hromadně — ' + bulkItems.length + ' položek:</span>'
+                    + (filmItems.length
+                        ? '<button is="emby-button" type="button" id="scBulkQueueBtn" class="raised button-submit" style="padding:.3em .9em;" title="Zařadí filmy do fronty přes autoselect. Stahuje se postupně s anti-ban pauzami."><span>⚡ Filmy do fronty (' + filmItems.length + ')</span></button>'
+                        : '')
+                    + '<button is="emby-button" type="button" id="scBulkWatchBtn" class="raised" style="padding:.3em .9em;" title="Přidá vše do Hlídaných — stáhne se, až vyjde dabing / nové epizody"><span>👁 Vše hlídat</span></button>'
+                    + '<span id="scBulkResult" style="font-size:.9em;"></span></div>';
             }
 
             html += '<div style="display:flex; flex-direction:column; gap:.4em;">';
@@ -419,7 +436,9 @@
                 var isPlay = String(item.url).indexOf('/Play/') === 0;
                 html += '<div class="sc-item" data-idx="' + idx + '" style="background:#252525; padding:.6em .9em; border-radius:4px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">'
                     + '<span>' + esc(title) + (year ? ' <span style="opacity:.6;">(' + year + ')</span>' : '') + '</span>'
-                    + '<span style="display:flex; gap:.6em; align-items:center;"><button is="emby-button" type="button" class="raised sc-watch-btn" data-idx="' + idx + '" title="Hlídat (stáhnout až vyjde dabing / nové epizody)" style="padding:.15em .55em;"><span>👁</span></button><span style="opacity:.5;">' + (isPlay ? '▶ streamy' : '📁') + '</span></span>'
+                    + '<span style="display:flex; gap:.6em; align-items:center;">'
+                    + (isContent(item) ? '<button is="emby-button" type="button" class="raised sc-watch-btn" data-idx="' + idx + '" title="Hlídat (stáhnout až vyjde dabing / nové epizody)" style="padding:.15em .55em;"><span>👁</span></button>' : '')
+                    + '<span style="opacity:.5;">' + (isPlay ? '▶ streamy' : '📁') + '</span></span>'
                     + '</div>';
             });
             html += '</div>';
@@ -444,6 +463,77 @@
                     queueSeason(episodeItems, seriesTitle, seasonBtn, container.querySelector('#scSeasonResult'));
                 });
             }
+
+            var bulkQueueBtn = container.querySelector('#scBulkQueueBtn');
+            if (bulkQueueBtn) {
+                bulkQueueBtn.addEventListener('click', function () {
+                    bulkQueue(
+                        bulkItems.filter(function (it) { return String(it.url).indexOf('/Play/') === 0; }),
+                        bulkQueueBtn, container.querySelector('#scBulkResult'));
+                });
+            }
+
+            var bulkWatchBtn = container.querySelector('#scBulkWatchBtn');
+            if (bulkWatchBtn) {
+                bulkWatchBtn.addEventListener('click', function () {
+                    bulkWatch(bulkItems, bulkWatchBtn, container.querySelector('#scBulkResult'));
+                });
+            }
+        }
+
+        /// Obsah (film/seriál) vs. kategorie/menu — 👁 a hromadné akce dávají smysl jen u obsahu.
+        function isContent(item) {
+            if (!item || !item.url) return false;
+            var u = String(item.url);
+            if (u.indexOf('sc://') === 0 || u.indexOf('cmd://') === 0) return false;
+            if (u.indexOf('/Play/') === 0) return true;
+            if (item.type === 'video') return true;
+            var info = item.info || {};
+            if (info.mediatype || info.year || info.plot) return true;
+            return itemYear(item) != null;
+        }
+
+        // Hromadné zařazení filmů ze seznamu (postupně, s odstupem — anti-ban).
+        function bulkQueue(films, btn, resultEl) {
+            if (!films.length) return;
+            if (!confirm('Zařadit ' + films.length + ' filmů do fronty?\n\nStahovat se budou postupně jeden po druhém s anti-ban pauzami — může to trvat dlouho. Fronta jde kdykoli upravit.')) return;
+            btn.disabled = true;
+            var ok = 0, fail = 0, i = 0;
+            (function next() {
+                if (i >= films.length) {
+                    btn.disabled = false;
+                    resultEl.textContent = '✅ ' + ok + '/' + films.length + (fail ? (' · ❌ ' + fail) : '');
+                    return;
+                }
+                resultEl.textContent = '… ' + (i + 1) + '/' + films.length;
+                var it = films[i], pi = parsePlayUrl(it.url);
+                api('POST', 'QueueAuto', {
+                    Path: it.url, Title: itemTitle(it), Year: itemYear(it),
+                    MediaType: pi.isEpisode ? 'episode' : 'movie', Season: pi.season, Episode: pi.episode
+                }).then(function (r) { if (r.success) ok++; else fail++; }, function () { fail++; })
+                    .then(function () { i++; setTimeout(next, 400); });
+            })();
+        }
+
+        // Hromadné přidání do Hlídaných (nic se hned nestahuje).
+        function bulkWatch(list, btn, resultEl) {
+            if (!list.length) return;
+            if (!confirm('Přidat ' + list.length + ' položek do Hlídaných?\n\nNic se hned nestáhne — hlídač je bude kontrolovat a stáhne, až budou splňovat tvoje priority (dabing/titulky).')) return;
+            btn.disabled = true;
+            var ok = 0, skip = 0, i = 0;
+            (function next() {
+                if (i >= list.length) {
+                    btn.disabled = false;
+                    resultEl.textContent = '👁 přidáno ' + ok + (skip ? (' · ' + skip + ' už hlídáno') : '');
+                    return;
+                }
+                resultEl.textContent = '… ' + (i + 1) + '/' + list.length;
+                var it = list[i], isPlay = String(it.url).indexOf('/Play/') === 0;
+                api('POST', 'Watch', {
+                    Type: isPlay ? 'movie' : 'series', Title: itemTitle(it), Year: itemYear(it), Url: it.url
+                }).then(function (r) { if (r.success) ok++; else skip++; }, function () { skip++; })
+                    .then(function () { i++; setTimeout(next, 120); });
+            })();
         }
 
         // Postupně (s malým odstupem) zařadí všechny epizody přes autoselect.
@@ -503,7 +593,7 @@
             }
             updateBreadcrumb();
             el('scResults').innerHTML = '<p>Načítám…</p>';
-            api('POST', 'Browse', { Path: path, Params: params || null }).then(function (data) {
+            api('POST', 'Menu', { Path: path, Params: params || null }).then(function (data) {
                 renderResults(data, seriesTitle);
             }, function () {
                 el('scResults').innerHTML = '<p style="color:#e57373;">Požadavek selhal.</p>';
@@ -863,6 +953,11 @@
 
         el('scSearchQuery').addEventListener('keydown', function (e) {
             if (e.key === 'Enter') { e.preventDefault(); el('scSearchBtn').click(); }
+        });
+
+        el('scBrowseBtn').addEventListener('click', function () {
+            browseStack = [];
+            browseTo('/', null, '📚 Katalog', null, true);
         });
 
         el('scBackBtn').addEventListener('click', function () {

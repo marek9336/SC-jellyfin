@@ -104,6 +104,37 @@ public class ScController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Procházení katalogu (root "/", kategorie, seznamy jako MARVEL/Netflix).
+    /// Statické cesty nepotřebují token, hlubší úrovně jdou přes API.
+    /// </summary>
+    [HttpPost("Menu")]
+    public async Task<ActionResult> Menu([FromBody] BrowseRequest request, CancellationToken ct)
+    {
+        var path = string.IsNullOrWhiteSpace(request.Path) ? "/" : request.Path;
+        try
+        {
+            var isStatic = request.Params == null
+                && await _state.Catalog.IsStaticAsync(path, ct).ConfigureAwait(false);
+
+            if (!isStatic && string.IsNullOrEmpty(_state.GetAuthToken()))
+            {
+                return Ok(new { error = "missing_token" });
+            }
+
+            using var doc = isStatic
+                ? await _state.Catalog.GetMenuAsync(path, ct).ConfigureAwait(false)
+                : await _state.Catalog.GetAsync(path, request.Params, ct).ConfigureAwait(false);
+
+            return Content(doc.RootElement.GetRawText(), "application/json");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "StreamCinema: menu {Path} selhalo", path);
+            return Ok(new { error = ex.Message });
+        }
+    }
+
     /// <summary>Hledání — zkratka nad Browse.</summary>
     [HttpPost("Search")]
     public Task<ActionResult> Search([FromBody] SearchRequest request, CancellationToken ct)
