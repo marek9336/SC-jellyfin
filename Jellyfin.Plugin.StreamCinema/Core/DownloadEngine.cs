@@ -72,7 +72,8 @@ public sealed class DownloadEngine
         var contentLength = resp.Content.Headers.ContentLength ?? 0;
         var total = existing + contentLength;
 
-        await using var source = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var source = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        await using var sourceDisposer = source;
         await using var target = new FileStream(
             partPath,
             existing > 0 ? FileMode.Append : FileMode.Create,
@@ -80,41 +81,64 @@ public sealed class DownloadEngine
             FileShare.Read,
             BufferSize);
 
+        // Zrušení (⏹ / Pozastavit / 🗑): ReadAsync(ct) nemusí přerušit už BĚŽÍCÍ čtení
+        // ze síťového streamu (ct se kontroluje mezi čteními). Proto při zrušení stream
+        // rovnou zavřeme — čekající read okamžitě spadne a přenos se zastaví hned.
+        using var ctReg = ct.Register(() =>
+        {
+            try
+            {
+                source.Dispose();
+            }
+            catch (Exception)
+            {
+                // ignore — cílem je jen odblokovat čekající read
+            }
+        });
+
         var buffer = new byte[BufferSize];
         long sessionBytes = 0;
         var overall = Stopwatch.StartNew();
         var reportWatch = Stopwatch.StartNew();
         long lastReportBytes = 0;
 
-        while (true)
+        try
         {
-            var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-            if (read == 0)
+            while (true)
             {
-                break;
-            }
-
-            await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-            sessionBytes += read;
-
-            // Limit rychlosti: pokud jsme napřed oproti ideálnímu času, počkáme
-            if (speedLimitBps > 0)
-            {
-                var idealMs = sessionBytes * 1000.0 / speedLimitBps;
-                var aheadMs = idealMs - overall.ElapsedMilliseconds;
-                if (aheadMs > 50)
+                var read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+                if (read == 0)
                 {
-                    await Task.Delay((int)Math.Min(aheadMs, 2000), ct).ConfigureAwait(false);
+                    break;
+                }
+
+                await target.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                sessionBytes += read;
+
+                // Limit rychlosti: pokud jsme napřed oproti ideálnímu času, počkáme
+                if (speedLimitBps > 0)
+                {
+                    var idealMs = sessionBytes * 1000.0 / speedLimitBps;
+                    var aheadMs = idealMs - overall.ElapsedMilliseconds;
+                    if (aheadMs > 50)
+                    {
+                        await Task.Delay((int)Math.Min(aheadMs, 2000), ct).ConfigureAwait(false);
+                    }
+                }
+
+                if (reportWatch.ElapsedMilliseconds >= 1000)
+                {
+                    var speed = (long)((sessionBytes - lastReportBytes) * 1000.0 / reportWatch.ElapsedMilliseconds);
+                    progress(existing + sessionBytes, total, speed);
+                    lastReportBytes = sessionBytes;
+                    reportWatch.Restart();
                 }
             }
-
-            if (reportWatch.ElapsedMilliseconds >= 1000)
-            {
-                var speed = (long)((sessionBytes - lastReportBytes) * 1000.0 / reportWatch.ElapsedMilliseconds);
-                progress(existing + sessionBytes, total, speed);
-                lastReportBytes = sessionBytes;
-                reportWatch.Restart();
-            }
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // zavření streamu kvůli zrušení → normalizovat na OperationCanceledException
+            throw new OperationCanceledException(ct);
         }
 
         progress(existing + sessionBytes, total, 0);
