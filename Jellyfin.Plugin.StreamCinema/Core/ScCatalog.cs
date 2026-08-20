@@ -194,6 +194,7 @@ public sealed class ScCatalog
                     opt.Codec = GetString(vid, "codec");
                     opt.Width = (int?)GetLong(vid, "width");
                     opt.Height = (int?)GetLong(vid, "height");
+                    opt.DurationSec = (int?)GetLong(vid, "duration");
                 }
             }
 

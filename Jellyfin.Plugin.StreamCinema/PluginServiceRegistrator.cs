@@ -13,5 +13,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
         serviceCollection.AddSingleton<ScState>();
         serviceCollection.AddSingleton<IHostedService, DownloadWorkerService>();
+        serviceCollection.AddSingleton<IHostedService, WatcherService>();
     }
 }

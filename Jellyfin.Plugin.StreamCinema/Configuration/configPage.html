@@ -14,6 +14,7 @@
                 <div style="display:flex; gap:.5em; margin-bottom:1.5em;">
                     <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabSearch">🔍 Hledání</button>
                     <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabQueue">⬇️ Fronta</button>
+                    <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabWatch">👁 Hlídané</button>
                     <button is="emby-button" type="button" class="raised sc-tab-btn" data-tab="scTabSettings">⚙️ Nastavení</button>
                 </div>
             </div>
@@ -71,6 +72,16 @@
                     <button is="emby-button" type="button" id="scPauseBtn" class="raised" style="margin-top:.75em;" title="Pozastaví worker a zastaví i právě běžící přenos (stažená část zůstane, naváže se)"><span>⏸ Pozastavit</span></button>
                 </div>
                 <div id="scQueueList"></div>
+            </div>
+
+            <!-- ═══════════ HLÍDANÉ ═══════════ -->
+            <div id="scTabWatch" class="sc-tab verticalSection hide">
+                <div class="fieldDescription" style="margin-bottom:1em;">
+                    Hlídané položky se periodicky kontrolují. Jakmile se objeví stream splňující tvoje
+                    priority (dabing/titulky), zařadí se do fronty. U seriálů se stahují nové epizody
+                    postupně (X–Y/den). Přidat: v Hledání u položky klikni na 👁.
+                </div>
+                <div id="scWatchList"></div>
             </div>
 
             <!-- ═══════════ NASTAVENÍ ═══════════ -->
@@ -253,6 +264,23 @@
                         </div>
                     </div>
 
+                    <h2 style="margin-top:1.5em;">Hlídač</h2>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgWatchDefaultIntervalDays" label="Výchozí interval kontroly (dní)" min="1" />
+                        <div class="fieldDescription">Jak často kontrolovat novou hlídanou položku. U každé položky lze změnit zvlášť.</div>
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgEpisodesPerDayMin" label="Epizod za den — minimum" min="0" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgEpisodesPerDayMax" label="Epizod za den — maximum" min="0" />
+                        <div class="fieldDescription">U seriálů se stahuje náhodně min–max epizod za den (simulace reálného sledování).</div>
+                    </div>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" id="cfgParanoiaMode" />
+                        <span>🎭 Paranoia mód — další stahování až po uplynutí délky obsahu (simulace sledování)</span>
+                    </label>
+
                     <br>
                     <button is="emby-button" type="submit" class="raised button-submit block"><span>Uložit nastavení</span></button>
                 </form>
@@ -301,6 +329,7 @@
             el(tabId).classList.remove('hide');
             if (tabId === 'scTabQueue') { refreshQueue(); startQueueTimer(); }
             else { stopQueueTimer(); }
+            if (tabId === 'scTabWatch') { renderWatch(); }
         }
 
         function startQueueTimer() {
@@ -390,12 +419,18 @@
                 var isPlay = String(item.url).indexOf('/Play/') === 0;
                 html += '<div class="sc-item" data-idx="' + idx + '" style="background:#252525; padding:.6em .9em; border-radius:4px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">'
                     + '<span>' + esc(title) + (year ? ' <span style="opacity:.6;">(' + year + ')</span>' : '') + '</span>'
-                    + '<span style="opacity:.5;">' + (isPlay ? '▶ streamy' : '📁') + '</span>'
+                    + '<span style="display:flex; gap:.6em; align-items:center;"><button is="emby-button" type="button" class="raised sc-watch-btn" data-idx="' + idx + '" title="Hlídat (stáhnout až vyjde dabing / nové epizody)" style="padding:.15em .55em;"><span>👁</span></button><span style="opacity:.5;">' + (isPlay ? '▶ streamy' : '📁') + '</span></span>'
                     + '</div>';
             });
             html += '</div>';
             container.innerHTML = html;
 
+            container.querySelectorAll('.sc-watch-btn').forEach(function (b) {
+                b.addEventListener('click', function (ev) {
+                    ev.stopPropagation();
+                    addWatch(items[parseInt(b.getAttribute('data-idx'), 10)], seriesTitle, b);
+                });
+            });
             container.querySelectorAll('.sc-item').forEach(function (elItem) {
                 elItem.addEventListener('click', function () {
                     var item = items[parseInt(elItem.getAttribute('data-idx'), 10)];
@@ -587,7 +622,8 @@
                             SubsLang: null,
                             Quality: s.quality,
                             Language: s.language,
-                            SizeText: s.sizeText
+                            SizeText: s.sizeText,
+                            DurationSec: s.durationSec
                         };
                         api('POST', 'Queue', body).then(function () {
                             btn.querySelector('span').textContent = '✓ Ve frontě';
@@ -696,12 +732,56 @@
             });
         }
 
+        // ── Hlídané ──────────────────────────────────────────────
+
+        function addWatch(it, seriesTitle, btn) {
+            var isPlay = String(it.url).indexOf('/Play/') === 0;
+            btn.disabled = true;
+            api('POST', 'Watch', { Type: isPlay ? 'movie' : 'series', Title: itemTitle(it), Year: itemYear(it), Url: it.url })
+                .then(function (r) {
+                    btn.querySelector('span').textContent = r.success ? '✓' : '👁';
+                    btn.title = r.success ? 'Přidáno do Hlídaných' : 'Už hlídáno';
+                    btn.disabled = false;
+                }, function () { btn.disabled = false; });
+        }
+
+        function renderWatch() {
+            api('GET', 'Watch').then(function (d) {
+                var items = d.items || [];
+                var box = el('scWatchList');
+                if (!items.length) { box.innerHTML = '<p>Zatím nic. Přidej přes 👁 v Hledání.</p>'; return; }
+                var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
+                items.forEach(function (i) {
+                    var typ = i.type === 'series' ? '📺 seriál' : '🎬 film';
+                    html += '<div style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
+                        + '<span>' + esc(i.title) + (i.year ? ' <span style="opacity:.6;">(' + i.year + ')</span>' : '') + ' <span style="opacity:.6;">· ' + typ + '</span><br>'
+                        + '<span style="opacity:.7; font-size:.9em;">' + (i.enabled ? '' : '⏸ vypnuto · ') + esc(i.lastResult || 'ještě nekontrolováno') + '</span></span>'
+                        + '<span style="display:flex; gap:.4em; align-items:center; white-space:nowrap;">'
+                        + '<input is="emby-input" type="number" min="1" value="' + (i.intervalDays || 7) + '" class="sc-w-int" data-id="' + i.id + '" style="width:64px;" /> <span style="opacity:.6;">dní</span>'
+                        + ' <button is="emby-button" type="button" class="raised sc-w-en" data-id="' + i.id + '" data-en="' + (i.enabled ? 1 : 0) + '" style="padding:.2em .6em;"><span>' + (i.enabled ? '⏸' : '▶') + '</span></button>'
+                        + ' <button is="emby-button" type="button" class="raised sc-w-del" data-id="' + i.id + '" style="padding:.2em .6em;"><span>🗑</span></button></span></div>';
+                });
+                html += '</div>';
+                box.innerHTML = html;
+                box.querySelectorAll('.sc-w-int').forEach(function (inp) {
+                    inp.addEventListener('change', function () { api('POST', 'Watch/' + inp.getAttribute('data-id'), { IntervalDays: parseInt(inp.value || '7', 10) }); });
+                });
+                box.querySelectorAll('.sc-w-en').forEach(function (b) {
+                    b.addEventListener('click', function () { api('POST', 'Watch/' + b.getAttribute('data-id'), { Enabled: b.getAttribute('data-en') !== '1' }).then(renderWatch); });
+                });
+                box.querySelectorAll('.sc-w-del').forEach(function (b) {
+                    b.addEventListener('click', function () { api('DELETE', 'Watch/' + b.getAttribute('data-id')).then(renderWatch); });
+                });
+            });
+        }
+
         // ── Konfigurace ──────────────────────────────────────────
 
         var cfgFields = [
             'KraskaUsername', 'KraskaPassword', 'ManualAuthToken', 'MoviesPath', 'SeriesPath',
             'PauseMinMinutes', 'PauseMaxMinutes', 'SpeedLimitMbps', 'DailyCapGb',
             'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'WindowJitterMinutes', 'UserAgent',
+            'WatchDefaultIntervalDays', 'EpisodesPerDayMin', 'EpisodesPerDayMax',
             'PreferredLang1', 'PreferredLang2', 'PreferredLang3',
             'MaxQuality', 'MaxFileSizeGb', 'MaxBitrateMbps', 'CodecPreference',
             'HdrMode', 'DvMode', 'AtmosMode', 'DeviceUuid', 'HelperUrl'
@@ -716,6 +796,7 @@
                 el('cfgTriggerLibraryScan').checked = !!config.TriggerLibraryScan;
                 el('cfgSkipWithoutPreferredLang').checked = !!config.SkipWithoutPreferredLang;
                 el('cfgPreferSubsWhenForeign').checked = config.PreferSubsWhenForeign !== false;
+                el('cfgParanoiaMode').checked = !!config.ParanoiaMode;
                 el('cfgUseHelper').checked = !!config.UseHelper;
             });
         }
@@ -733,6 +814,7 @@
                 config.TriggerLibraryScan = el('cfgTriggerLibraryScan').checked;
                 config.SkipWithoutPreferredLang = el('cfgSkipWithoutPreferredLang').checked;
                 config.PreferSubsWhenForeign = el('cfgPreferSubsWhenForeign').checked;
+                config.ParanoiaMode = el('cfgParanoiaMode').checked;
                 config.UseHelper = el('cfgUseHelper').checked;
                 return ApiClient.updatePluginConfiguration(pluginId, config);
             });

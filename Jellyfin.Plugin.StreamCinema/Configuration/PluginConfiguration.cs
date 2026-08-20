@@ -119,4 +119,17 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>URL sidecar helperu, např. `http://sc-helper:65007` (bez lomítka na konci).</summary>
     public string HelperUrl { get; set; } = string.Empty;
+
+    // ── Hlídač (watcher) ──────────────────────────────────────────
+    /// <summary>Výchozí interval kontroly nové sledované položky (dny).</summary>
+    public int WatchDefaultIntervalDays { get; set; } = 7;
+
+    /// <summary>U seriálů: minimum epizod zařazených za den (náhodně min–max).</summary>
+    public int EpisodesPerDayMin { get; set; } = 1;
+
+    /// <summary>U seriálů: maximum epizod zařazených za den.</summary>
+    public int EpisodesPerDayMax { get; set; } = 3;
+
+    /// <summary>Paranoia mód: další stahování až po uplynutí délky staženého obsahu.</summary>
+    public bool ParanoiaMode { get; set; }
 }

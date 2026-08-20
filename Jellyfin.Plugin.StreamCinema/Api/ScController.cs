@@ -168,6 +168,7 @@ public class ScController : ControllerBase
                 atmos = s.Atmos,
                 group = s.Group,
                 source = s.Source,
+                durationSec = s.DurationSec,
             }).ToList();
 
             return Ok(new { streams });
@@ -203,6 +204,7 @@ public class ScController : ControllerBase
             Quality = request.Quality,
             Language = request.Language,
             SizeText = request.SizeText,
+            DurationSec = request.DurationSec,
         };
 
         _state.Queue.Add(item);
@@ -264,6 +266,7 @@ public class ScController : ControllerBase
                 Quality = best.Quality,
                 Language = best.Languages.Count > 0 ? string.Join(",", best.Languages) : best.Language,
                 SizeText = best.SizeText,
+                DurationSec = best.DurationSec,
             };
 
             _state.Queue.Add(item);
@@ -385,6 +388,97 @@ public class ScController : ControllerBase
             kraskaDaysLeft = s.KraskaDaysLeft,
         });
     }
+
+    // ── Hlídač ────────────────────────────────────────────────────
+
+    /// <summary>Seznam sledovaných položek (camelCase projekce).</summary>
+    [HttpGet("Watch")]
+    public ActionResult GetWatch()
+    {
+        var items = _state.Watch.GetAll().Select(w => new
+        {
+            id = w.Id,
+            type = w.Type,
+            title = w.Title,
+            year = w.Year,
+            url = w.Url,
+            intervalDays = w.IntervalDays,
+            enabled = w.Enabled,
+            hasBacklog = w.HasBacklog,
+            lastResult = w.LastResult,
+        }).ToList();
+        return Ok(new { items });
+    }
+
+    /// <summary>Přidá položku do hlídaných.</summary>
+    [HttpPost("Watch")]
+    public ActionResult AddWatch([FromBody] AddWatchRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Url))
+        {
+            return BadRequest(new { error = "Chybí url" });
+        }
+
+        var cfg = Plugin.Instance?.Configuration;
+        var item = new WatchItem
+        {
+            Type = request.Type == "series" ? "series" : "movie",
+            Title = request.Title ?? "?",
+            Year = request.Year,
+            Url = request.Url,
+            IntervalDays = request.IntervalDays ?? cfg?.WatchDefaultIntervalDays ?? 7,
+        };
+        var id = _state.Watch.Add(item);
+        return Ok(new { success = id != null, id });
+    }
+
+    /// <summary>Úprava sledované položky (interval / zapnutí).</summary>
+    [HttpPost("Watch/{id}")]
+    public ActionResult UpdateWatch([FromRoute] Guid id, [FromBody] UpdateWatchRequest request)
+    {
+        _state.Watch.Update(id, w =>
+        {
+            if (request.IntervalDays is > 0)
+            {
+                w.IntervalDays = request.IntervalDays.Value;
+            }
+
+            if (request.Enabled != null)
+            {
+                w.Enabled = request.Enabled.Value;
+            }
+        });
+        return Ok(new { success = true });
+    }
+
+    /// <summary>Odebere sledovanou položku.</summary>
+    [HttpDelete("Watch/{id}")]
+    public ActionResult RemoveWatch([FromRoute] Guid id)
+    {
+        return Ok(new { success = _state.Watch.Remove(id) });
+    }
+}
+
+public class AddWatchRequest
+{
+    /// <summary>"series" | "movie".</summary>
+    public string? Type { get; set; }
+
+    public string? Title { get; set; }
+
+    public int? Year { get; set; }
+
+    [Required]
+    public string Url { get; set; } = string.Empty;
+
+    public int? IntervalDays { get; set; }
+}
+
+public class UpdateWatchRequest
+{
+    public int? IntervalDays { get; set; }
+
+    public bool? Enabled { get; set; }
 }
 
 public class BrowseRequest
@@ -453,4 +547,6 @@ public class AddQueueRequest
     public string? Language { get; set; }
 
     public string? SizeText { get; set; }
+
+    public int? DurationSec { get; set; }
 }

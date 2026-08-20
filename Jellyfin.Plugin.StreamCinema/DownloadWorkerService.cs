@@ -143,6 +143,7 @@ public sealed class DownloadWorkerService : BackgroundService
         status.CurrentItemId = item.Id;
         status.CurrentItemTitle = DisplayTitle(item);
         status.LastMessage = null;
+        var dlStart = DateTime.UtcNow;
 
         // Zrušitelný scope: ⏹ Zastavit / Pozastavit umí přerušit běžící přenos
         var itemCt = _state.BeginDownload(ct);
@@ -271,8 +272,18 @@ public sealed class DownloadWorkerService : BackgroundService
 
             // ── Lidská pauza před dalším souborem ─────────────────
             // Když další položka čeká jako „Stáhnout teď", jen krátký oddech.
+            var forceNext = _state.Queue.GetNextQueued()?.ForceNow == true;
+
+            // Paranoia mód: další stahování až po uplynutí délky obsahu (mínus doba stahování).
+            var paranoia = false;
             TimeSpan pause;
-            if (_state.Queue.GetNextQueued()?.ForceNow == true)
+            if (cfg.ParanoiaMode && item.DurationSec is > 0 && !forceNext)
+            {
+                var elapsed = (DateTime.UtcNow - dlStart).TotalSeconds;
+                pause = TimeSpan.FromSeconds(Math.Max(60, item.DurationSec.Value - elapsed));
+                paranoia = true;
+            }
+            else if (forceNext)
             {
                 pause = TimeSpan.FromSeconds(_random.Next(20, 61));
             }
@@ -284,7 +295,9 @@ public sealed class DownloadWorkerService : BackgroundService
             }
 
             status.NextActionUtc = DateTime.UtcNow.Add(pause);
-            status.LastMessage = $"Hotovo. Pauza {pause.TotalMinutes:F0} min před dalším stahováním";
+            status.LastMessage = paranoia
+                ? $"🎭 Paranoia: čekám {pause.TotalMinutes:F0} min (délka obsahu)"
+                : $"Hotovo. Pauza {pause.TotalMinutes:F0} min před dalším stahováním";
             _logger.LogInformation("StreamCinema: pauza {Minutes:F0} min", pause.TotalMinutes);
             await _state.Queue.WaitOrWakeAsync(pause, ct).ConfigureAwait(false);
         }

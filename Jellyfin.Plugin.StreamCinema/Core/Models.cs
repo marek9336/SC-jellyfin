@@ -81,6 +81,9 @@ public class QueueItem
     /// Denní strop a min. volné místo platí dál (bezpečnostní limity).
     /// </summary>
     public bool ForceNow { get; set; }
+
+    /// <summary>Délka obsahu v sekundách (z metadat streamu) — pro „paranoia" pauzu.</summary>
+    public int? DurationSec { get; set; }
 }
 
 /// <summary>
@@ -118,6 +121,47 @@ public class StreamOption
     public bool Atmos { get; set; }
     public string? Group { get; set; }
     public string? Source { get; set; }
+
+    /// <summary>Délka v sekundách (stream_info.video.duration), pro paranoia pauzu.</summary>
+    public int? DurationSec { get; set; }
+}
+
+/// <summary>Sledovaná položka (Hlídač) — film nebo seriál, periodicky kontrolovaná.</summary>
+public class WatchItem
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    /// <summary>"series" nebo "movie".</summary>
+    public string Type { get; set; } = "movie";
+
+    public string Title { get; set; } = string.Empty;
+
+    public int? Year { get; set; }
+
+    /// <summary>Katalogová URL: u filmu /Play/{id}, u seriálu procházecí root.</summary>
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>Interval kontroly ve dnech (per položka).</summary>
+    public int IntervalDays { get; set; } = 7;
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Klíče stažených epizod ("S01E03") / u filmu se používá MovieGrabbed.</summary>
+    public List<string> Grabbed { get; set; } = new();
+
+    public bool MovieGrabbed { get; set; }
+
+    public DateTime? LastCheckedUtc { get; set; }
+
+    /// <summary>Datum (yyyy-MM-dd) a počet epizod zařazených dnes (limit epizod/den).</summary>
+    public string? TodayDate { get; set; }
+
+    public int TodayCount { get; set; }
+
+    /// <summary>Zbývají nezpracované epizody → re-check denně místo dle intervalu.</summary>
+    public bool HasBacklog { get; set; }
+
+    public string? LastResult { get; set; }
 }
 
 /// <summary>Info o kra.sk účtu.</summary>
