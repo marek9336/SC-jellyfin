@@ -171,6 +171,24 @@
                         </div>
                     </div>
 
+                    <h2 style="margin-top:1.5em;">Stahování přes SC helper</h2>
+                    <div class="fieldDescription" style="margin-bottom:.75em;">
+                        Reálné streamy Stream Cinemy mají RSA-podepsaný ident, který rozluští jen
+                        jejich helper. Pro <strong>skutečné stažení musí běžet SC helper jako sidecar</strong>
+                        (samostatná služba/kontejner) a být tu zapnutý. Bez něj funguje jen hledání a výběr.
+                    </div>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" id="cfgUseHelper" />
+                        <span>Resolvovat streamy přes SC helper (nutné pro stahování)</span>
+                    </label>
+                    <div class="inputContainer" style="margin-top:.75em;">
+                        <input is="emby-input" type="text" id="cfgHelperUrl" label="URL SC helperu (např. http://sc-helper:65007)" />
+                        <div class="fieldDescription">
+                            Adresa sidecaru dosažitelná z Jellyfin kontejneru (bez lomítka na konci).
+                            Návod na spuštění sidecaru viz balíček <code>sidecar/</code> v projektu.
+                        </div>
+                    </div>
+
                     <h2 style="margin-top:1.5em;">Cílové složky (cesty uvnitř Jellyfin kontejneru)</h2>
                     <div class="inputContainer">
                         <input is="emby-input" type="text" id="cfgMoviesPath" label="Složka pro filmy" />
@@ -678,7 +696,7 @@
             'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent',
             'PreferredLang1', 'PreferredLang2', 'PreferredLang3',
             'MaxQuality', 'MaxFileSizeGb', 'MaxBitrateMbps', 'CodecPreference',
-            'HdrMode', 'DvMode', 'AtmosMode', 'DeviceUuid'
+            'HdrMode', 'DvMode', 'AtmosMode', 'DeviceUuid', 'HelperUrl'
         ];
 
         function loadConfig() {
@@ -689,6 +707,7 @@
                 });
                 el('cfgTriggerLibraryScan').checked = !!config.TriggerLibraryScan;
                 el('cfgSkipWithoutPreferredLang').checked = !!config.SkipWithoutPreferredLang;
+                el('cfgUseHelper').checked = !!config.UseHelper;
             });
         }
 
@@ -704,6 +723,7 @@
                 });
                 config.TriggerLibraryScan = el('cfgTriggerLibraryScan').checked;
                 config.SkipWithoutPreferredLang = el('cfgSkipWithoutPreferredLang').checked;
+                config.UseHelper = el('cfgUseHelper').checked;
                 return ApiClient.updatePluginConfiguration(pluginId, config);
             });
         }

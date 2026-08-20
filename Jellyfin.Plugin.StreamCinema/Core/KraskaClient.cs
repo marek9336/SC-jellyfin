@@ -42,6 +42,17 @@ public sealed class KraskaClient
     /// <summary>Důvod poslední neúspěšné operace (login/resolve) — pro GUI a log. Heslo nikdy neobsahuje.</summary>
     public string? LastError { get; private set; }
 
+    /// <summary>Zajistí přihlášení a vrátí kra.sk session_id (pro SC helper: /play?token=...).</summary>
+    public async Task<string?> GetSessionIdAsync(CancellationToken ct)
+    {
+        if (_session == null)
+        {
+            await LoginAsync(ct).ConfigureAwait(false);
+        }
+
+        return _session;
+    }
+
     /// <summary>Přihlášení — získá session_id. Vrací true při úspěchu.</summary>
     public async Task<bool> LoginAsync(CancellationToken ct)
     {

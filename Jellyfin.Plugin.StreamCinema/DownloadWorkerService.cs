@@ -155,7 +155,32 @@ public sealed class DownloadWorkerService : BackgroundService
                 throw new KraskaException("Položka nemá ident ani resolve URL streamu");
             }
 
-            var url = await _state.Kraska.ResolveAsync(ident, itemCt).ConfigureAwait(false);
+            // Resolve na stažitelný odkaz. Reálné streamy jsou `v1:` (RSA podpis) → nutný
+            // SC helper (sidecar). Přímá kra.sk cesta funguje jen pro `v0:`/titulky.
+            string url;
+            if (cfg.UseHelper && !string.IsNullOrWhiteSpace(cfg.HelperUrl))
+            {
+                var sessionId = await _state.Kraska.GetSessionIdAsync(itemCt).ConfigureAwait(false);
+                if (string.IsNullOrEmpty(sessionId))
+                {
+                    throw new KraskaException("Přihlášení ke kra.sk selhalo (helper resolve).");
+                }
+
+                try
+                {
+                    url = await _state.Helper.ResolveAsync(cfg.HelperUrl, ident, sessionId, itemCt).ConfigureAwait(false);
+                }
+                catch (HttpRequestException hre)
+                {
+                    throw new KraskaException(
+                        $"SC helper nedostupný (HTTP {(int?)hre.StatusCode ?? 0}). Běží sidecar na {cfg.HelperUrl}?");
+                }
+            }
+            else
+            {
+                url = await _state.Kraska.ResolveAsync(ident, itemCt).ConfigureAwait(false);
+            }
+
             var extension = MediaOrganizer.ExtensionFromUrl(url);
             var finalPath = MediaOrganizer.BuildTargetPath(cfg.MoviesPath, cfg.SeriesPath, item, extension);
             var partPath = finalPath + ".part";

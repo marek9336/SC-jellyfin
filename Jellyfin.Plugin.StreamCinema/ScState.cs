@@ -24,6 +24,9 @@ public sealed class ScState : IDisposable
 
     public DownloadEngine Engine { get; }
 
+    /// <summary>Klient sidecar SC helperu (resolve v1: identů). Stateless — bezpečné sdílet.</summary>
+    public HelperClient Helper { get; }
+
     /// <summary>Runtime stav workeru pro /status endpoint (aktualizuje worker).</summary>
     public WorkerStatus Status { get; } = new();
 
@@ -86,6 +89,8 @@ public sealed class ScState : IDisposable
         var downloadClient = httpClientFactory.CreateClient("StreamCinemaDownload");
         downloadClient.Timeout = Timeout.InfiniteTimeSpan;
         Engine = new DownloadEngine(downloadClient, Log);
+
+        Helper = new HelperClient(httpClientFactory.CreateClient("StreamCinemaApi"), Log);
     }
 
     private static PluginConfiguration Config =>

@@ -99,4 +99,15 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Po dokončení stahování spustit sken knihovny.</summary>
     public bool TriggerLibraryScan { get; set; } = true;
+
+    // ── SC Helper sidecar (resolve v1: identů) ────────────────────
+    /// <summary>
+    /// Resolvovat streamy přes externí SC helper (sidecar). NUTNÉ pro reálné stažení:
+    /// stream identy `v1:` jsou RSA-podepsané a rozluští je jen helper Stream Cinemy.
+    /// Bez helperu funguje jen hledání/výběr, ne samotné stažení.
+    /// </summary>
+    public bool UseHelper { get; set; }
+
+    /// <summary>URL sidecar helperu, např. `http://sc-helper:65007` (bez lomítka na konci).</summary>
+    public string HelperUrl { get; set; } = string.Empty;
 }
