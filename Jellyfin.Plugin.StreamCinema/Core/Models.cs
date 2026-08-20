@@ -156,6 +156,18 @@ public class WatchItem
     /// <summary>Interval kontroly ve dnech (per položka).</summary>
     public int IntervalDays { get; set; } = 7;
 
+    /// <summary>
+    /// Vlastní max. kvalita jen pro tuhle položku (SD/720p/1080p/4K/8K, "-" = bez limitu).
+    /// Prázdné = použít globální nastavení. Pro tituly, které chceš v nejvyšší kvalitě.
+    /// </summary>
+    public string? MaxQuality { get; set; }
+
+    /// <summary>
+    /// Vlastní limit velikosti pro tuhle položku v GB (0 = bez limitu).
+    /// null = použít globální. Hodí se při vyšší kvalitě, ať ji globální limit nevyřadí.
+    /// </summary>
+    public int? MaxFileSizeGb { get; set; }
+
     public bool Enabled { get; set; } = true;
 
     /// <summary>Klíče stažených epizod ("S01E03") / u filmu se používá MovieGrabbed.</summary>

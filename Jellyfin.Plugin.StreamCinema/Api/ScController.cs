@@ -128,6 +128,17 @@ public class ScController : ControllerBase
 
             return Content(doc.RootElement.GetRawText(), "application/json");
         }
+        catch (HttpRequestException hre) when (hre.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Katalog SC nabízí i sekce, které na serveru už neexistují (např. staré
+            // seznamy /Search/getList/{id}). Uživateli to říct srozumitelně.
+            _logger.LogInformation("StreamCinema: sekce {Path} na serveru SC neexistuje (404)", path);
+            return Ok(new
+            {
+                error = "Tuhle sekci Stream Cinema už nenabízí (404) — bývá to u starých seznamů. "
+                    + "Zkus jinou sekci, např. Filmy → Novinky / TOP 100 / Trendy.",
+            });
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "StreamCinema: menu {Path} selhalo", path);
@@ -466,6 +477,8 @@ public class ScController : ControllerBase
             enabled = w.Enabled,
             hasBacklog = w.HasBacklog,
             lastResult = w.LastResult,
+            maxQuality = w.MaxQuality,
+            maxFileSizeGb = w.MaxFileSizeGb,
         }).ToList();
         return Ok(new { items });
     }
@@ -507,6 +520,17 @@ public class ScController : ControllerBase
             {
                 w.Enabled = request.Enabled.Value;
             }
+
+            // prázdný řetězec = zpět na globální nastavení
+            if (request.MaxQuality != null)
+            {
+                w.MaxQuality = string.IsNullOrWhiteSpace(request.MaxQuality) ? null : request.MaxQuality;
+            }
+
+            if (request.MaxFileSizeGb != null)
+            {
+                w.MaxFileSizeGb = request.MaxFileSizeGb < 0 ? null : request.MaxFileSizeGb;
+            }
         });
         return Ok(new { success = true });
     }
@@ -539,6 +563,12 @@ public class UpdateWatchRequest
     public int? IntervalDays { get; set; }
 
     public bool? Enabled { get; set; }
+
+    /// <summary>Prázdné = zpět na globální nastavení.</summary>
+    public string? MaxQuality { get; set; }
+
+    /// <summary>Záporné = zpět na globální nastavení; 0 = bez limitu.</summary>
+    public int? MaxFileSizeGb { get; set; }
 }
 
 public class BrowseRequest

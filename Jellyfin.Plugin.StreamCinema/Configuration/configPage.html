@@ -868,7 +868,14 @@
                     html += '<div style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
                         + '<span>' + esc(i.title) + (i.year ? ' <span style="opacity:.6;">(' + i.year + ')</span>' : '') + ' <span style="opacity:.6;">· ' + typ + '</span><br>'
                         + '<span style="opacity:.7; font-size:.9em;">' + (i.enabled ? '' : '⏸ vypnuto · ') + esc(i.lastResult || 'ještě nekontrolováno') + '</span></span>'
-                        + '<span style="display:flex; gap:.4em; align-items:center; white-space:nowrap;">'
+                        + '<span style="display:flex; gap:.4em; align-items:center; white-space:nowrap; flex-wrap:wrap;">'
+                        + '<select is="emby-select" class="sc-w-q" data-id="' + i.id + '" title="Kvalita jen pro tuhle položku (výchozí = globální nastavení)" style="width:130px;">'
+                        + ['', '-', 'SD', '720p', '1080p', '4K', '8K'].map(function (q) {
+                            var lbl = q === '' ? 'kvalita: výchozí' : (q === '-' ? 'kvalita: bez limitu' : 'max ' + q);
+                            return '<option value="' + q + '"' + ((i.maxQuality || '') === q ? ' selected' : '') + '>' + lbl + '</option>';
+                        }).join('')
+                        + '</select>'
+                        + '<input is="emby-input" type="number" min="0" placeholder="GB" value="' + (i.maxFileSizeGb != null ? i.maxFileSizeGb : '') + '" class="sc-w-gb" data-id="' + i.id + '" title="Max velikost jen pro tuhle položku (prázdné = globální, 0 = bez limitu)" style="width:70px;" />'
                         + '<input is="emby-input" type="number" min="1" value="' + (i.intervalDays || 7) + '" class="sc-w-int" data-id="' + i.id + '" style="width:64px;" /> <span style="opacity:.6;">dní</span>'
                         + ' <button is="emby-button" type="button" class="raised sc-w-en" data-id="' + i.id + '" data-en="' + (i.enabled ? 1 : 0) + '" style="padding:.2em .6em;"><span>' + (i.enabled ? '⏸' : '▶') + '</span></button>'
                         + ' <button is="emby-button" type="button" class="raised sc-w-del" data-id="' + i.id + '" style="padding:.2em .6em;"><span>🗑</span></button></span></div>';
@@ -877,6 +884,16 @@
                 box.innerHTML = html;
                 box.querySelectorAll('.sc-w-int').forEach(function (inp) {
                     inp.addEventListener('change', function () { api('POST', 'Watch/' + inp.getAttribute('data-id'), { IntervalDays: parseInt(inp.value || '7', 10) }); });
+                });
+                box.querySelectorAll('.sc-w-q').forEach(function (sel) {
+                    sel.addEventListener('change', function () { api('POST', 'Watch/' + sel.getAttribute('data-id'), { MaxQuality: sel.value }); });
+                });
+                box.querySelectorAll('.sc-w-gb').forEach(function (inp) {
+                    inp.addEventListener('change', function () {
+                        // prázdné pole = -1 → server vrátí položku na globální nastavení
+                        var v = inp.value.trim() === '' ? -1 : parseInt(inp.value, 10);
+                        api('POST', 'Watch/' + inp.getAttribute('data-id'), { MaxFileSizeGb: v });
+                    });
                 });
                 box.querySelectorAll('.sc-w-en').forEach(function (b) {
                     b.addEventListener('click', function () { api('POST', 'Watch/' + b.getAttribute('data-id'), { Enabled: b.getAttribute('data-en') !== '1' }).then(renderWatch); });

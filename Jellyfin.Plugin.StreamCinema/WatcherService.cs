@@ -93,8 +93,25 @@ public sealed class WatcherService : BackgroundService
         }
     }
 
-    private async Task Check(WatchItem item, PluginConfiguration cfg, StreamSelectorOptions opts, CancellationToken ct)
+    private async Task Check(WatchItem item, PluginConfiguration cfg, StreamSelectorOptions globalOpts, CancellationToken ct)
     {
+        // Per-položkový override kvality/velikosti (např. tenhle film chci ve 4K,
+        // i když globálně stahuju 1080p).
+        var opts = globalOpts;
+        if (!string.IsNullOrWhiteSpace(item.MaxQuality) || item.MaxFileSizeGb != null)
+        {
+            opts = BuildOptions(cfg);
+            if (!string.IsNullOrWhiteSpace(item.MaxQuality))
+            {
+                opts.MaxQuality = item.MaxQuality!;
+            }
+
+            if (item.MaxFileSizeGb != null)
+            {
+                opts.MaxFileSizeGb = item.MaxFileSizeGb.Value;
+            }
+        }
+
         if (item.Type == "movie")
         {
             if (item.MovieGrabbed)
