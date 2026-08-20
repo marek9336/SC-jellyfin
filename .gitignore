@@ -23,3 +23,6 @@ secrets.*
 README.md
 HANDOFF.md
 NOTES.md
+
+# Sidecar obsahuje proprietární SC helper (service.sc.helper) — NEpatří do public repa
+sidecar/
