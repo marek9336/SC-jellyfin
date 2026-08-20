@@ -122,6 +122,10 @@
                         <input is="emby-checkbox" type="checkbox" id="cfgSkipWithoutPreferredLang" />
                         <span>Bez preferovaného jazyka nestahovat (jinak se vezme cokoliv)</span>
                     </label>
+                    <label class="checkboxContainer">
+                        <input is="emby-checkbox" type="checkbox" id="cfgPreferSubsWhenForeign" />
+                        <span>Když není v hlavním jazyce (např. jen anglicky), preferovat verzi s titulky</span>
+                    </label>
                     <div class="selectContainer">
                         <select is="emby-select" id="cfgMaxQuality" label="Maximální kvalita">
                             <option value="720p">720p</option>
@@ -226,6 +230,10 @@
                     </div>
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="cfgWindowToHour" label="Stahovat do (hodina 0–23)" min="0" max="23" />
+                    </div>
+                    <div class="inputContainer">
+                        <input is="emby-input" type="number" id="cfgWindowJitterMinutes" label="Rozptyl startu (min) — ať to nezačíná přesně na začátku okna" min="0" />
+                        <div class="fieldDescription">První denní stahování se odloží o náhodných 0–N minut (anti-ban). 0 = vypnuto.</div>
                     </div>
 
                     <h2 style="margin-top:1.5em;">Pokročilé</h2>
@@ -693,7 +701,7 @@
         var cfgFields = [
             'KraskaUsername', 'KraskaPassword', 'ManualAuthToken', 'MoviesPath', 'SeriesPath',
             'PauseMinMinutes', 'PauseMaxMinutes', 'SpeedLimitMbps', 'DailyCapGb',
-            'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'UserAgent',
+            'MinFreeSpaceGb', 'WindowFromHour', 'WindowToHour', 'WindowJitterMinutes', 'UserAgent',
             'PreferredLang1', 'PreferredLang2', 'PreferredLang3',
             'MaxQuality', 'MaxFileSizeGb', 'MaxBitrateMbps', 'CodecPreference',
             'HdrMode', 'DvMode', 'AtmosMode', 'DeviceUuid', 'HelperUrl'
@@ -707,6 +715,7 @@
                 });
                 el('cfgTriggerLibraryScan').checked = !!config.TriggerLibraryScan;
                 el('cfgSkipWithoutPreferredLang').checked = !!config.SkipWithoutPreferredLang;
+                el('cfgPreferSubsWhenForeign').checked = config.PreferSubsWhenForeign !== false;
                 el('cfgUseHelper').checked = !!config.UseHelper;
             });
         }
@@ -723,6 +732,7 @@
                 });
                 config.TriggerLibraryScan = el('cfgTriggerLibraryScan').checked;
                 config.SkipWithoutPreferredLang = el('cfgSkipWithoutPreferredLang').checked;
+                config.PreferSubsWhenForeign = el('cfgPreferSubsWhenForeign').checked;
                 config.UseHelper = el('cfgUseHelper').checked;
                 return ApiClient.updatePluginConfiguration(pluginId, config);
             });

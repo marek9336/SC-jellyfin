@@ -31,6 +31,13 @@ public sealed class StreamSelectorOptions
     public string DvMode { get; set; } = "ignore";
 
     public string AtmosMode { get; set; } = "ignore";
+
+    /// <summary>
+    /// Když stream NENÍ v primárním jazyce (jen sekundární/žádný dabing), preferovat
+    /// verzi s titulky. Bonus je menší než rozdíl mezi jazykovými úrovněmi, takže
+    /// primární dabing vždy vyhraje — rozhoduje jen mezi stejnou jazykovou úrovní.
+    /// </summary>
+    public bool PreferSubsWhenForeign { get; set; } = true;
 }
 
 /// <summary>
@@ -55,6 +62,10 @@ public static class StreamSelector
     private const int Lang1Weight = 300;
     private const int Lang2Weight = 200;
     private const int Lang3Weight = 100;
+
+    // Titulky u ne-primárního jazyka: menší než mezera mezi jazyk. úrovněmi (100),
+    // ale větší než součet video bonusů (~55) → rozhodne mezi stejnou jaz. úrovní.
+    private const int SubsBonus = 70;
 
     private static readonly Regex ExtendedRe = new(
         "extended|director|prodlou|uncut|unrated",
@@ -115,6 +126,13 @@ public static class StreamSelector
 
             // ── Skóre ─────────────────────────────────────────────
             double score = langScore;
+
+            // Titulky u ne-primárního jazyka (např. jen anglicky) → preferovat s titulky.
+            // Neaplikuje se na primární dabing (ten titulky nepotřebuje).
+            if (o.PreferSubsWhenForeign && langScore < Lang1Weight && HasSubtitles(s))
+            {
+                score += SubsBonus;
+            }
 
             // Kvalita v rámci limitu: vyšší je lepší
             score += level * 10;
@@ -196,6 +214,11 @@ public static class StreamSelector
             !string.IsNullOrWhiteSpace(lang) && set.Contains(lang.Trim().ToLowerInvariant());
     }
 
+    /// <summary>Stream má titulky: buď URL titulků, nebo jazyková varianta s "+tit".</summary>
+    private static bool HasSubtitles(StreamOption s) =>
+        !string.IsNullOrWhiteSpace(s.SubsUrl)
+        || s.Languages.Any(l => l.Contains("+tit", StringComparison.OrdinalIgnoreCase));
+
     private static double ModeScore(string mode, bool has) => mode switch
     {
         "prefer" when has => 15,
@@ -245,6 +268,11 @@ public static class StreamSelector
         if (s.Atmos)
         {
             parts.Add("Atmos");
+        }
+
+        if (HasSubtitles(s))
+        {
+            parts.Add("titulky");
         }
 
         return $"{string.Join(" · ", parts)} (skóre {score:F0})";

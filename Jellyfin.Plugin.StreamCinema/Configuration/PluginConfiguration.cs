@@ -46,6 +46,9 @@ public class PluginConfiguration : BasePluginConfiguration
     /// <summary>Když stream nemá žádný z preferovaných jazyků: true = nestahovat, false = vzít cokoliv.</summary>
     public bool SkipWithoutPreferredLang { get; set; }
 
+    /// <summary>Když stream není v primárním jazyce (např. jen anglicky), preferovat verzi s titulky.</summary>
+    public bool PreferSubsWhenForeign { get; set; } = true;
+
     /// <summary>Maximální kvalita (SD/720p/1080p/4K/8K, "-" = bez limitu). Vyšší kvalita se vyřadí.</summary>
     public string MaxQuality { get; set; } = "4K";
 
@@ -96,6 +99,12 @@ public class PluginConfiguration : BasePluginConfiguration
     public int WindowFromHour { get; set; }
 
     public int WindowToHour { get; set; }
+
+    /// <summary>
+    /// Náhodný rozptyl startu prvního denního stahování (minuty). Aby nezačínalo přesně
+    /// na začátku okna (podezřelé). První stahování dne se odloží o náhodných 0–N minut.
+    /// </summary>
+    public int WindowJitterMinutes { get; set; } = 15;
 
     /// <summary>Po dokončení stahování spustit sken knihovny.</summary>
     public bool TriggerLibraryScan { get; set; } = true;

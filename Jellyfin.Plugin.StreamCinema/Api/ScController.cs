@@ -234,6 +234,7 @@ public class ScController : ControllerBase
                 Lang2 = cfg.PreferredLang2,
                 Lang3 = cfg.PreferredLang3,
                 SkipWithoutPreferredLang = cfg.SkipWithoutPreferredLang,
+                PreferSubsWhenForeign = cfg.PreferSubsWhenForeign,
                 MaxQuality = cfg.MaxQuality,
                 MaxFileSizeGb = cfg.MaxFileSizeGb,
                 MaxBitrateMbps = cfg.MaxBitrateMbps,

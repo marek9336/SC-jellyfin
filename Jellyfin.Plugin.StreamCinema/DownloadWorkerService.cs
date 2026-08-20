@@ -20,6 +20,9 @@ public sealed class DownloadWorkerService : BackgroundService
     private readonly ILogger<DownloadWorkerService> _logger;
     private readonly Random _random = new();
 
+    // Den (yyyy-MM-dd), pro který už byl aplikován náhodný rozptyl startu okna.
+    private string? _windowJitterDay;
+
     public DownloadWorkerService(ScState state, ILibraryManager libraryManager, ILogger<DownloadWorkerService> logger)
     {
         _state = state;
@@ -91,6 +94,28 @@ public sealed class DownloadWorkerService : BackgroundService
             status.LastMessage = $"Mimo časové okno ({cfg.WindowFromHour}:00–{cfg.WindowToHour}:00), čekám";
             await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
             return;
+        }
+
+        // Rozptyl startu: první denní stahování v okně odložit o náhodných 0–N minut,
+        // ať to nezačíná přesně na začátku okna (anti-ban). „Stáhnout teď" obchází.
+        if (!item.ForceNow
+            && cfg.WindowFromHour != cfg.WindowToHour
+            && cfg.WindowJitterMinutes > 0)
+        {
+            var today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (_windowJitterDay != today)
+            {
+                _windowJitterDay = today;
+                var jitter = TimeSpan.FromSeconds(_random.Next(0, cfg.WindowJitterMinutes * 60 + 1));
+                if (jitter.TotalSeconds > 5)
+                {
+                    status.LastMessage = $"Náhodné zpoždění startu {jitter.TotalMinutes:F0} min (anti-ban)";
+                    status.NextActionUtc = DateTime.UtcNow.Add(jitter);
+                    await _state.Queue.WaitOrWakeAsync(jitter, ct).ConfigureAwait(false);
+                    status.NextActionUtc = null;
+                    return;
+                }
+            }
         }
 
         // Denní strop — platí i pro „Stáhnout teď" (anti-ban pojistka)
