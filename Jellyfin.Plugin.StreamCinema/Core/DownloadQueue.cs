@@ -73,13 +73,75 @@ public sealed class DownloadQueue
     {
         lock (_lock)
         {
-            // „Stáhnout teď" položky mají přednost
+            // Pořadí: „Stáhnout teď" → ruční pořadí (▲▼) → čas zařazení
             var item = _state.Items
                 .Where(i => i.Status == QueueItemStatus.Queued)
                 .OrderByDescending(i => i.ForceNow)
+                .ThenBy(i => i.SortIndex)
                 .ThenBy(i => i.AddedUtc)
                 .FirstOrDefault();
-            return item == null ? null : Clone(item);
+
+            if (item == null)
+            {
+                return null;
+            }
+
+            // Epizody SEKVENČNĚ: když je na řadě epizoda, vezmi z téhož seriálu
+            // nejnižší nestaženou (E01 → E02 → …), ať to vypadá jako reálné sledování.
+            if (item.MediaType == ScMediaType.Episode && !item.ForceNow)
+            {
+                var series = item.SeriesTitle ?? item.Title;
+                var first = _state.Items
+                    .Where(i => i.Status == QueueItemStatus.Queued
+                        && i.MediaType == ScMediaType.Episode
+                        && !i.ForceNow
+                        && (i.SeriesTitle ?? i.Title) == series)
+                    .OrderBy(i => i.Season ?? 0)
+                    .ThenBy(i => i.Episode ?? 0)
+                    .FirstOrDefault();
+                if (first != null)
+                {
+                    item = first;
+                }
+            }
+
+            return Clone(item);
+        }
+    }
+
+    /// <summary>Posun položky ve frontě nahoru/dolů (ruční priorita). Vrací true při změně.</summary>
+    public bool Move(Guid id, bool up)
+    {
+        lock (_lock)
+        {
+            var queued = _state.Items
+                .Where(i => i.Status == QueueItemStatus.Queued)
+                .OrderByDescending(i => i.ForceNow)
+                .ThenBy(i => i.SortIndex)
+                .ThenBy(i => i.AddedUtc)
+                .ToList();
+
+            var idx = queued.FindIndex(i => i.Id == id);
+            if (idx < 0)
+            {
+                return false;
+            }
+
+            var target = up ? idx - 1 : idx + 1;
+            if (target < 0 || target >= queued.Count)
+            {
+                return false;
+            }
+
+            // Přerovnat SortIndex podle nového pořadí (0,1,2… po prohození dvojice)
+            (queued[idx], queued[target]) = (queued[target], queued[idx]);
+            for (var i = 0; i < queued.Count; i++)
+            {
+                queued[i].SortIndex = i;
+            }
+
+            SaveLocked();
+            return true;
         }
     }
 
@@ -124,6 +186,8 @@ public sealed class DownloadQueue
                 return;
             }
 
+            // Nová položka jde na konec fronty (ruční pořadí ▲▼ ji pak může posunout)
+            item.SortIndex = _state.Items.Count > 0 ? _state.Items.Max(i => i.SortIndex) + 1 : 0;
             _state.Items.Add(item);
             SaveLocked();
             _log($"queue: přidáno \"{item.Title}\" ({item.Quality})");

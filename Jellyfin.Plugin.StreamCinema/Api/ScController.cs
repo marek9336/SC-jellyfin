@@ -315,8 +315,20 @@ public class ScController : ControllerBase
     [HttpGet("Queue")]
     public ActionResult GetQueue()
     {
-        var items = _state.Queue.GetAll()
-            .OrderByDescending(i => i.AddedUtc)
+        // Čekající/stahované v pořadí stahování (ForceNow → ruční pořadí → čas),
+        // dokončené a chybné pod nimi (nejnovější nahoře).
+        var all = _state.Queue.GetAll();
+        var active = all
+            .Where(i => i.Status is QueueItemStatus.Queued or QueueItemStatus.Downloading)
+            .OrderByDescending(i => i.Status == QueueItemStatus.Downloading)
+            .ThenByDescending(i => i.ForceNow)
+            .ThenBy(i => i.SortIndex)
+            .ThenBy(i => i.AddedUtc);
+        var rest = all
+            .Where(i => i.Status is not (QueueItemStatus.Queued or QueueItemStatus.Downloading))
+            .OrderByDescending(i => i.CompletedUtc ?? i.AddedUtc);
+
+        var items = active.Concat(rest)
             .Select(i => new
             {
                 id = i.Id,
@@ -367,6 +379,13 @@ public class ScController : ControllerBase
     public ActionResult ForceNowItem([FromRoute] Guid id)
     {
         return Ok(new { success = _state.Queue.ForceNow(id) });
+    }
+
+    /// <summary>Posun položky ve frontě nahoru (▲) / dolů (▼) — ruční priorita.</summary>
+    [HttpPost("Queue/{id}/Move/{direction}")]
+    public ActionResult MoveQueueItem([FromRoute] Guid id, [FromRoute] string direction)
+    {
+        return Ok(new { success = _state.Queue.Move(id, direction.Equals("up", StringComparison.OrdinalIgnoreCase)) });
     }
 
     /// <summary>

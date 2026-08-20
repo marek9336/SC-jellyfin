@@ -84,6 +84,12 @@ public class QueueItem
 
     /// <summary>Délka obsahu v sekundách (z metadat streamu) — pro „paranoia" pauzu.</summary>
     public int? DurationSec { get; set; }
+
+    /// <summary>
+    /// Ruční pořadí ve frontě (nižší = dřív). Nastavuje se tlačítky ▲▼ v GUI.
+    /// Při zařazení se dá na konec fronty.
+    /// </summary>
+    public long SortIndex { get; set; }
 }
 
 /// <summary>
