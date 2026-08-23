@@ -734,6 +734,12 @@
         // ── Fronta / stav ────────────────────────────────────────
 
         function refreshQueue() {
+            // Během přetahování (a než se nové pořadí uloží) se seznam nepřekresluje,
+            // jinak by re-render vytrhl řádek zpod kurzoru.
+            if (queueBusy()) {
+                return;
+            }
+
             api('GET', 'Status').then(function (s) {
                 var text, detail = [];
                 if (s.currentItemTitle) {
@@ -791,9 +797,17 @@
                         ? ' <span style="background:#e65100; color:#fff; border-radius:3px; padding:0 .35em; font-size:.78em;">⚡ přednost</span>'
                         : '';
 
-                    html += '<div style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
+                    // Přetahovat jde jen čekající položka bez přednosti — ta se stahuje
+                    // první tak jako tak, takže by ji pořadí stejně neovlivnilo.
+                    var canDrag = stKey === 'Queued' && !i.forceNow;
+
+                    html += '<div data-id="' + i.id + '"' + (canDrag ? ' data-drag="1"' : '')
+                        + ' style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;'
+                        + (canDrag ? ' cursor:grab;' : '') + '">'
+                        + '<span style="display:flex; align-items:center; gap:.7em; min-width:0;">'
+                        + (canDrag ? '<span class="sc-grip" title="Přetažením změníš pořadí ve frontě" style="opacity:.45; font-size:1.2em; line-height:1; touch-action:none; cursor:grab;">⠿</span>' : '')
                         + '<span>' + esc(name) + ' <span style="opacity:.6;">' + esc(i.quality || '') + ' ' + esc(i.sizeText || '') + '</span><br>'
-                        + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + forceBadge + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span>'
+                        + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + forceBadge + (i.errorMessage ? ' — ' + esc(i.errorMessage) : '') + '</span></span></span>'
                         + '<span style="display:flex; gap:.4em;">'
                         + (stKey === 'Queued' ? '<button is="emby-button" type="button" class="raised sc-up" data-id="' + i.id + '" style="padding:.2em .5em;" title="Nahoru ve frontě"><span>▲</span></button><button is="emby-button" type="button" class="raised sc-down" data-id="' + i.id + '" style="padding:.2em .5em;" title="Dolů ve frontě"><span>▼</span></button>' : '')
                         + (stKey === 'Done' || stKey === 'Skipped' ? '<button is="emby-button" type="button" class="raised sc-redl" data-id="' + i.id + '" style="padding:.2em .7em;" title="Smaže z historie, zařadí znovu do fronty a existující soubor přepíše"><span>↻ Stáhnout znovu</span></button>' : '')
@@ -805,6 +819,7 @@
                 });
                 html += '</div>';
                 el('scQueueList').innerHTML = html;
+                bindQueueDrag(el('scQueueList'));
 
                 el('scQueueList').querySelectorAll('.sc-remove').forEach(function (b) {
                     b.addEventListener('click', function () {
@@ -841,6 +856,191 @@
                         api('POST', 'Queue/' + b.getAttribute('data-id') + '/Stop').then(refreshQueue);
                     });
                 });
+            });
+        }
+
+        // ── Přetahování pořadí ve frontě ─────────────────────────
+        // Myší jde chytit celý řádek (mimo tlačítka), dotykem jen za úchyt ⠿.
+        // Řádek se během tahu posouvá transformem a jakmile překročí půlku
+        // souseda, prohodí se s ním rovnou v DOM. Po puštění se pošle celé
+        // nové pořadí najednou (Queue/Reorder).
+
+        var dragCtx = null;
+        var reorderPending = false;
+
+        function queueBusy() { return dragCtx !== null || reorderPending; }
+
+        function dragRows(root) {
+            return Array.prototype.slice.call(root.querySelectorAll('[data-drag="1"]'));
+        }
+
+        function rowId(r) { return r.getAttribute('data-id'); }
+
+        function bindQueueDrag(root) {
+            dragRows(root).forEach(function (row) {
+                row.addEventListener('pointerdown', function (ev) { startDrag(ev, row); });
+            });
+        }
+
+        function startDrag(ev, row) {
+            if (dragCtx || ev.button > 0) return;
+            if (ev.target.closest('button')) return;
+            if (ev.pointerType !== 'mouse' && !ev.target.closest('.sc-grip')) return;
+
+            var list = row.parentNode;
+            var rows = dragRows(list);
+            if (rows.length < 2) return;
+
+            ev.preventDefault();
+            dragCtx = {
+                row: row,
+                list: list,
+                pointerId: ev.pointerId,
+                y: ev.clientY,
+                base: ev.clientY,
+                order: rows.map(rowId).join(),
+                scroller: scrollParent(list),
+                step: 0,
+                timer: null
+            };
+
+            try { row.setPointerCapture(ev.pointerId); } catch (e) { /* nevadí, posloucháme na document */ }
+            row.style.opacity = '.95';
+            row.style.boxShadow = '0 6px 18px rgba(0,0,0,.6)';
+            row.style.position = 'relative';
+            row.style.zIndex = '3';
+            row.style.cursor = 'grabbing';
+            document.body.style.userSelect = 'none';
+
+            document.addEventListener('pointermove', onDragMove);
+            document.addEventListener('pointerup', endDrag);
+            document.addEventListener('pointercancel', endDrag);
+        }
+
+        function onDragMove(ev) {
+            if (!dragCtx) return;
+            // Když se puštění tlačítka někde ztratí (mimo okno), tah tady ukončíme.
+            if (ev.pointerType === 'mouse' && ev.buttons === 0) { endDrag(); return; }
+
+            ev.preventDefault();
+            dragCtx.y = ev.clientY;
+            applyDragOffset();
+            settleDrag();
+            edgeScroll(ev.clientY);
+        }
+
+        function applyDragOffset() {
+            dragCtx.row.style.transform = 'translateY(' + (dragCtx.y - dragCtx.base) + 'px)';
+        }
+
+        // Při rychlém tahu přeskočí kurzor víc řádků najednou, proto se prohazuje,
+        // dokud je co prohazovat (pojistka proti nekonečné smyčce).
+        function settleDrag() {
+            for (var guard = 0; guard < 200 && swapOnce(); guard++) { /* dokud to jede */ }
+        }
+
+        function swapOnce() {
+            var me = dragCtx.row, y = dragCtx.y;
+            var others = dragRows(dragCtx.list).filter(function (r) { return r !== me; });
+
+            for (var n = 0; n < others.length; n++) {
+                var r = others[n];
+                var box = r.getBoundingClientRect();
+                var mid = box.top + box.height / 2;
+                var isAfter = !!(me.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+                if (!isAfter && y < mid) {
+                    dragCtx.list.insertBefore(me, r);
+                } else if (isAfter && y > mid) {
+                    dragCtx.list.insertBefore(me, r.nextSibling);
+                } else {
+                    continue;
+                }
+
+                dragCtx.base = y;   // řádek zapadl do nového místa, posun začíná znovu
+                applyDragOffset();
+                return true;
+            }
+
+            return false;
+        }
+
+        // Seznam může rolovat stránka nebo některý z rodičů — najdi ten pravý.
+        function scrollParent(node) {
+            for (var p = node.parentNode; p && p.nodeType === 1; p = p.parentNode) {
+                var ov = window.getComputedStyle(p).overflowY;
+                if ((ov === 'auto' || ov === 'scroll') && p.scrollHeight > p.clientHeight + 4) return p;
+            }
+            return null;
+        }
+
+        function scrollPos() {
+            return dragCtx.scroller
+                ? dragCtx.scroller.scrollTop
+                : (window.pageYOffset || document.documentElement.scrollTop || 0);
+        }
+
+        function scrollSet(v) {
+            if (dragCtx.scroller) dragCtx.scroller.scrollTop = v;
+            else window.scrollTo(0, v);
+        }
+
+        // Tah k hornímu/dolnímu okraji roluje seznam — u delší fronty se jinak
+        // nedá přetáhnout dál, než kam dohlédne obrazovka.
+        function edgeScroll(y) {
+            var zone = 90;
+            var step = 0;
+            if (y < zone) step = -Math.ceil((zone - y) / 5);
+            else if (y > window.innerHeight - zone) step = Math.ceil((y - (window.innerHeight - zone)) / 5);
+            dragCtx.step = step;
+
+            if (step && !dragCtx.timer) {
+                dragCtx.timer = setInterval(function () {
+                    if (!dragCtx) return;
+                    var before = scrollPos();
+                    scrollSet(before + dragCtx.step);
+                    var moved = scrollPos() - before;
+                    if (!moved) return;
+                    dragCtx.base -= moved;   // ať řádek zůstane pod kurzorem
+                    applyDragOffset();
+                    settleDrag();
+                }, 16);
+            } else if (!step && dragCtx.timer) {
+                clearInterval(dragCtx.timer);
+                dragCtx.timer = null;
+            }
+        }
+
+        function endDrag() {
+            if (!dragCtx) return;
+            var ctx = dragCtx;
+            dragCtx = null;
+
+            if (ctx.timer) clearInterval(ctx.timer);
+            document.removeEventListener('pointermove', onDragMove);
+            document.removeEventListener('pointerup', endDrag);
+            document.removeEventListener('pointercancel', endDrag);
+            document.body.style.userSelect = '';
+
+            ctx.row.style.transform = '';
+            ctx.row.style.opacity = '';
+            ctx.row.style.boxShadow = '';
+            ctx.row.style.position = '';
+            ctx.row.style.zIndex = '';
+            ctx.row.style.cursor = 'grab';
+            try { ctx.row.releasePointerCapture(ctx.pointerId); } catch (e) { /* už uvolněno */ }
+
+            var ids = dragRows(ctx.list).map(rowId);
+            if (ids.join() === ctx.order) { refreshQueue(); return; }
+
+            reorderPending = true;
+            api('POST', 'Queue/Reorder', { Ids: ids }).then(function () {
+                reorderPending = false;
+                refreshQueue();
+            }, function () {
+                reorderPending = false;
+                Dashboard.alert('Změnu pořadí se nepodařilo uložit.');
+                refreshQueue();
             });
         }
 

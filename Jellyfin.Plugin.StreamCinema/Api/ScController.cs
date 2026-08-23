@@ -402,6 +402,16 @@ public class ScController : ControllerBase
         return Ok(new { success = _state.Queue.Redownload(id) });
     }
 
+    /// <summary>
+    /// Nové pořadí fronty po přetažení — ID čekajících položek v pořadí,
+    /// v jakém se mají stahovat.
+    /// </summary>
+    [HttpPost("Queue/Reorder")]
+    public ActionResult ReorderQueue([FromBody] ReorderQueueRequest request)
+    {
+        return Ok(new { success = _state.Queue.Reorder(request.Ids ?? new List<Guid>()) });
+    }
+
     /// <summary>Posun položky ve frontě nahoru (▲) / dolů (▼) — ruční priorita.</summary>
     [HttpPost("Queue/{id}/Move/{direction}")]
     public ActionResult MoveQueueItem([FromRoute] Guid id, [FromRoute] string direction)
@@ -605,6 +615,12 @@ public class QueueAutoRequest
     public int? Season { get; set; }
 
     public int? Episode { get; set; }
+}
+
+public class ReorderQueueRequest
+{
+    /// <summary>ID čekajících položek v novém pořadí (shora dolů).</summary>
+    public List<Guid>? Ids { get; set; }
 }
 
 public class AddQueueRequest

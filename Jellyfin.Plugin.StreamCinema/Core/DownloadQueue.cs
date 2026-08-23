@@ -180,6 +180,49 @@ public sealed class DownloadQueue
     }
 
     /// <summary>
+    /// Nové pořadí čekajících položek podle seznamu ID (přetažení ve frontě).
+    /// Neznámá ID se ignorují; položky, které v seznamu chybí (například přibyly
+    /// během přetahování), zůstanou za ním v dosavadním pořadí.
+    /// Položky s „přednost" (ForceNow) se nepřetahují — stahují se stejně první.
+    /// </summary>
+    public bool Reorder(IReadOnlyList<Guid> orderedIds)
+    {
+        lock (_lock)
+        {
+            var queued = _state.Items
+                .Where(i => i.Status == QueueItemStatus.Queued && !i.ForceNow)
+                .OrderBy(i => i.SortIndex)
+                .ThenBy(i => i.AddedUtc)
+                .ToList();
+
+            var byId = queued.ToDictionary(i => i.Id);
+            var seen = new HashSet<Guid>();
+            var ordered = new List<QueueItem>();
+            foreach (var id in orderedIds)
+            {
+                if (byId.TryGetValue(id, out var item) && seen.Add(id))
+                {
+                    ordered.Add(item);
+                }
+            }
+
+            if (ordered.Count == 0)
+            {
+                return false;
+            }
+
+            ordered.AddRange(queued.Where(i => !seen.Contains(i.Id)));
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                ordered[i].SortIndex = i;
+            }
+
+            SaveLocked();
+            return true;
+        }
+    }
+
+    /// <summary>
     /// „Stáhnout teď": označí položku k okamžitému stažení (obejde okno/pauzy)
     /// a probudí worker. Funguje i na chybové položky (retry + přednost).
     /// </summary>
