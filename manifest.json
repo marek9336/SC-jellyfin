@@ -9,6 +9,14 @@
     "imageUrl": "",
     "versions": [
       {
+        "version": "0.13.1.0",
+        "changelog": "Viz https://github.com/marek9336/SC-jellyfin/releases/tag/v0.13.1",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/marek9336/SC-jellyfin/releases/download/v0.13.1/streamcinema_0.13.1.0.zip",
+        "checksum": "6cd2446e5b4a2258fe2fd71e793fd894",
+        "timestamp": "2026-08-31T17:48:41Z"
+      },
+      {
         "version": "0.13.0.0",
         "changelog": "Viz https://github.com/marek9336/SC-jellyfin/releases/tag/v0.13.0",
         "targetAbi": "10.11.0.0",
