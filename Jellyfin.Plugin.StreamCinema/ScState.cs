@@ -33,6 +33,52 @@ public sealed class ScState : IDisposable
     /// <summary>Runtime stav workeru pro /status endpoint (aktualizuje worker).</summary>
     public WorkerStatus Status { get; } = new();
 
+    // ── Výpadek katalogu / helperu ────────────────────────────────
+    // Když je služba mimo (HTTP 5xx), nemá smysl to zkoušet u každé položky dokola
+    // — worker i hlídač si počkají a mezitím se ani nehlásí chyby u položek.
+    private readonly object _outageLock = new();
+    private DateTime _outageUntilUtc = DateTime.MinValue;
+    private string? _outageReason;
+
+    /// <summary>Zapíše výpadek: po tuhle dobu se katalog nezkouší.</summary>
+    public void MarkOutage(TimeSpan duration, string reason)
+    {
+        lock (_outageLock)
+        {
+            var until = DateTime.UtcNow.Add(duration);
+            if (until > _outageUntilUtc)
+            {
+                _outageUntilUtc = until;
+                _outageReason = reason;
+            }
+        }
+    }
+
+    /// <summary>Kolik zbývá do konce výpadku (TimeSpan.Zero = neprobíhá).</summary>
+    public TimeSpan OutageRemaining()
+    {
+        lock (_outageLock)
+        {
+            var rest = _outageUntilUtc - DateTime.UtcNow;
+            return rest > TimeSpan.Zero ? rest : TimeSpan.Zero;
+        }
+    }
+
+    public string? OutageReason
+    {
+        get { lock (_outageLock) { return OutageRemaining() > TimeSpan.Zero ? _outageReason : null; } }
+    }
+
+    /// <summary>Ruční „zkus to hned" — zruší čekání na konec výpadku.</summary>
+    public void ClearOutage()
+    {
+        lock (_outageLock)
+        {
+            _outageUntilUtc = DateTime.MinValue;
+            _outageReason = null;
+        }
+    }
+
     // ── Probuzení hlídače (⚡ Zkontrolovat teď) ────────────────────
     private readonly SemaphoreSlim _watchWake = new(0, 1);
 

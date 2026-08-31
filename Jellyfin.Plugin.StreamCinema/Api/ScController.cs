@@ -413,6 +413,24 @@ public class ScController : ControllerBase
         return Ok(new { removed = _state.Queue.ClearCompleted() });
     }
 
+    /// <summary>
+    /// „↻ Zkusit znovu vše" — vrátí do fronty všechno ze sekce Problémy
+    /// (typicky po výpadku serveru SC) a zruší případné čekání na konec výpadku.
+    /// </summary>
+    [HttpPost("Queue/RetryAll")]
+    public ActionResult RetryAllProblems()
+    {
+        _state.ClearOutage();
+        return Ok(new { retried = _state.Queue.RetryAll() });
+    }
+
+    /// <summary>Zruší „⚡ přednost" u položky (překliknutí / chci napřed něco jiného).</summary>
+    [HttpPost("Queue/{id}/Unforce")]
+    public ActionResult UnforceItem([FromRoute] Guid id)
+    {
+        return Ok(new { success = _state.Queue.Unforce(id) });
+    }
+
     /// <summary>Vrátí chybnou položku zpět do fronty.</summary>
     [HttpPost("Queue/{id}/Retry")]
     public ActionResult RetryQueueItem([FromRoute] Guid id)
@@ -477,9 +495,16 @@ public class ScController : ControllerBase
                 _state.Queue.WorkerPaused = true;
                 // Pauza zastaví i právě běžící přenos (.part zůstává, naváže se přes Range)
                 _state.CancelDownload();
+                _state.Status.NextActionUtc = null;
+                _state.Status.LastMessage =
+                    "Pozastaveno — samo se nic stahovat nebude, dokud nedáš ▶ Obnovit";
+                _logger.LogInformation("StreamCinema: worker pozastaven uživatelem");
                 return Ok(new { success = true, paused = true });
             case "resume":
                 _state.Queue.WorkerPaused = false;
+                _state.Status.LastMessage = "Pokračuji…";
+                _state.Queue.Wake();
+                _logger.LogInformation("StreamCinema: worker obnoven uživatelem");
                 return Ok(new { success = true, paused = false });
             default:
                 return BadRequest(new { error = "Neznámá akce" });
@@ -505,6 +530,10 @@ public class ScController : ControllerBase
             dailyBytes = _state.Queue.GetDailyBytes(),
             freeSpaceBytes = s.FreeSpaceBytes,
             kraskaDaysLeft = s.KraskaDaysLeft,
+            outageReason = _state.OutageReason,
+            outageUntilUtc = _state.OutageRemaining() > TimeSpan.Zero
+                ? DateTime.UtcNow.Add(_state.OutageRemaining())
+                : (DateTime?)null,
         });
     }
 

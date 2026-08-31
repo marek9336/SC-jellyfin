@@ -70,6 +70,8 @@ public sealed class DownloadWorkerService : BackgroundService
 
         if (cfg == null || _state.Queue.WorkerPaused)
         {
+            // Ať GUI neukazuje odpočet „další akce" u pozastaveného workeru.
+            status.NextActionUtc = null;
             await _state.Queue.WaitOrWakeAsync(IdlePoll, ct).ConfigureAwait(false);
             return;
         }
@@ -88,6 +90,20 @@ public sealed class DownloadWorkerService : BackgroundService
         {
             status.LastMessage = "Chybí kra.sk účet v nastavení";
             await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
+            return;
+        }
+
+        // Výpadek katalogu / helperu: nezkoušet to dokola u každé položky. Čeká se
+        // v kuse (typicky hodinu), takže to nevypadá jako stroj bušící do serveru.
+        // „Stáhnout teď" výpadek obchází — uživatel si to může vynutit sám.
+        var outage = _state.OutageRemaining();
+        if (!item.ForceNow && outage > TimeSpan.Zero)
+        {
+            status.LastMessage =
+                $"{_state.OutageReason ?? "Služba je dočasně mimo"} — další pokus v {DateTime.Now.Add(outage):H:mm}";
+            status.NextActionUtc = DateTime.UtcNow.Add(outage);
+            await _state.Queue.WaitOrWakeAsync(outage, ct).ConfigureAwait(false);
+            status.NextActionUtc = null;
             return;
         }
 
@@ -214,7 +230,14 @@ public sealed class DownloadWorkerService : BackgroundService
                 }
                 catch (HttpRequestException hre)
                 {
-                    throw new KraskaException($"Katalog SC nedostupný (HTTP {(int?)hre.StatusCode ?? 0}) při resolve streamu");
+                    var code = (int?)hre.StatusCode ?? 0;
+                    if (code >= 500 || code == 0)
+                    {
+                        // 5xx = server SC je mimo; 0 = vůbec se nedovoláme (DNS/timeout).
+                        throw new ScUnavailableException($"Katalog SC nedostupný (HTTP {code})");
+                    }
+
+                    throw new KraskaException($"Katalog SC odmítl resolve streamu (HTTP {code})");
                 }
             }
 
@@ -240,14 +263,23 @@ public sealed class DownloadWorkerService : BackgroundService
                 }
                 catch (HttpRequestException hre)
                 {
-                    throw new KraskaException(
-                        $"SC helper nedostupný (HTTP {(int?)hre.StatusCode ?? 0}). Běží sidecar na {cfg.HelperUrl}?");
+                    var code = (int?)hre.StatusCode ?? 0;
+                    var msg = $"SC helper nedostupný (HTTP {code}). Běží sidecar na {cfg.HelperUrl}?";
+                    if (code >= 500 || code == 0)
+                    {
+                        throw new ScUnavailableException(msg);
+                    }
+
+                    throw new KraskaException(msg);
                 }
             }
             else
             {
                 url = await _state.Kraska.ResolveAsync(ident, itemCt).ConfigureAwait(false);
             }
+
+            // Dostali jsme odkaz → služba zase jede, případný zápis o výpadku zahodit.
+            _state.ClearOutage();
 
             var extension = MediaOrganizer.ExtensionFromUrl(url);
             var finalPath = MediaOrganizer.BuildTargetPath(cfg.MoviesPath, cfg.SeriesPath, item, extension);
@@ -369,6 +401,29 @@ public sealed class DownloadWorkerService : BackgroundService
                 i.StoppedPercent = stoppedAt;
             });
             status.LastMessage = "Stahování zastaveno uživatelem";
+        }
+        catch (ScUnavailableException ex)
+        {
+            // Výpadek služby není chyba položky — pokus se nezapočítá, jen se dýl počká.
+            // Po probuzení platí normální pravidla (časové okno, pauzy), takže mimo
+            // aktivní hodiny se stejně nic nezkouší.
+            var wait = TimeSpan.FromMinutes(_random.Next(50, 76));
+            _state.MarkOutage(wait, ex.Message);
+            _state.Queue.Update(item.Id, i =>
+            {
+                i.Status = QueueItemStatus.Queued;
+                i.ErrorMessage = ex.Message + " — počkám a zkusím znovu";
+            });
+
+            status.CurrentItemId = null;
+            status.CurrentItemTitle = null;
+            status.CurrentSpeedBps = 0;
+            status.NextActionUtc = DateTime.UtcNow.Add(wait);
+            status.LastMessage =
+                $"{ex.Message} — další pokus v {DateTime.Now.Add(wait):H:mm} (výpadek se nepočítá do pokusů)";
+            _logger.LogWarning(
+                "StreamCinema: {Message} — pauza {Minutes:F0} min, pokusy se nepočítají", ex.Message, wait.TotalMinutes);
+            await _state.Queue.WaitOrWakeAsync(wait, ct).ConfigureAwait(false);
         }
         catch (KraskaPermanentException ex)
         {

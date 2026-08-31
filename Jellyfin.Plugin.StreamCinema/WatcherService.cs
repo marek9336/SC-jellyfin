@@ -60,6 +60,13 @@ public sealed class WatcherService : BackgroundService
             return; // bez tokenu/účtu nemá smysl kontrolovat
         }
 
+        // Výpadek katalogu — nezkoušet dokola. Zároveň se u položek NEzapisuje
+        // „zkontrolováno", ať kvůli cizímu výpadku nečekají celý svůj interval.
+        if (_state.OutageRemaining() > TimeSpan.Zero)
+        {
+            return;
+        }
+
         var opts = BuildOptions(cfg);
 
         foreach (var item in _state.Watch.GetAll())
@@ -114,6 +121,16 @@ public sealed class WatcherService : BackgroundService
             catch (OperationCanceledException)
             {
                 throw;
+            }
+            catch (Exception ex) when (IsUnavailable(ex))
+            {
+                // Server SC je mimo — počkat a zkusit později. LastCheckedUtc se nemění.
+                var wait = TimeSpan.FromMinutes(_random.Next(50, 76));
+                _state.MarkOutage(wait, "Katalog SC nedostupný");
+                _logger.LogWarning(
+                    "StreamCinema hlídač: katalog nedostupný ({Message}), pauza {Minutes:F0} min",
+                    ex.Message, wait.TotalMinutes);
+                return;
             }
             catch (Exception ex)
             {
@@ -462,6 +479,11 @@ public sealed class WatcherService : BackgroundService
             && string.Equals(
                 MediaOrganizer.CleanTitle(q.SeriesTitle ?? q.Title), title, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>Je to výpadek služby (5xx / nedovoláme se), ne chyba položky?</summary>
+    private static bool IsUnavailable(Exception ex) =>
+        ex is ScUnavailableException
+        || (ex is HttpRequestException hre && ((int?)hre.StatusCode ?? 0) is 0 or >= 500);
 
     /// <summary>Český tvar slova „epizoda" podle počtu (1 / 2–4 / 5+).</summary>
     private static string Eps(int n) => n == 1 ? "epizoda" : n >= 2 && n <= 4 ? "epizody" : "epizod";

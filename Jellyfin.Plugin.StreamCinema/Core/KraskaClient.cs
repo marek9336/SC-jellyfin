@@ -295,6 +295,18 @@ public class KraskaException : Exception
 }
 
 /// <summary>
+/// Služba je dočasně mimo (HTTP 5xx / nedostupný host) — není to chyba položky.
+/// Worker ji nezapočítá do pokusů, jen počká delší dobu a zkusí to znovu.
+/// </summary>
+public sealed class ScUnavailableException : KraskaException
+{
+    public ScUnavailableException(string message)
+        : base(message)
+    {
+    }
+}
+
+/// <summary>
 /// Trvalá chyba, kterou nemá smysl opakovat (vadný/šifrovaný ident, neexistující soubor).
 /// Worker položku rovnou označí Chyba — žádné retry ani re-login (anti-ban).
 /// </summary>

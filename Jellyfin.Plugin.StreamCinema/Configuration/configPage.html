@@ -88,7 +88,10 @@
                 <div id="scQueueList"></div>
 
                 <div id="scProblemSection" class="hide">
-                    <h2 style="margin:1.5em 0 .5em;">⚠️ Problémy <span id="scProblemCount" style="opacity:.6; font-size:.8em;"></span></h2>
+                    <h2 style="margin:1.5em 0 .5em; display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">
+                        <span>⚠️ Problémy <span id="scProblemCount" style="opacity:.6; font-size:.8em;"></span></span>
+                        <button is="emby-button" type="button" id="scProblemRetryAll" class="raised" style="padding:.2em .7em; font-size:.7em;" title="Vrátí do fronty všechny položky z Problémů (a zruší čekání na konec výpadku)"><span>↻ Zkusit znovu vše</span></button>
+                    </h2>
                     <div class="fieldDescription" style="margin-bottom:.5em;">
                         Co se nepovedlo ani po opakovaných pokusech. U každé položky je důvod
                         a procento, na kterém se stahování zastavilo. ↻ zkusí znovu (naváže na staženou část).
@@ -922,6 +925,9 @@
             if (canDrag) {
                 buttons += btn('sc-up', i.id, '▲', 'Nahoru ve frontě') + btn('sc-down', i.id, '▼', 'Dolů ve frontě');
             }
+            if (i.forceNow && (stKey === 'Queued' || stKey === 'Downloading')) {
+                buttons += btn('sc-unforce', i.id, '⚡✕', 'Zrušit přednost — položka se vrátí do běžného pořadí fronty');
+            }
             if (stKey === 'Done' || stKey === 'Skipped') {
                 buttons += btn('sc-redl', i.id, '↻ Stáhnout znovu', 'Zařadí znovu do fronty a existující soubor přepíše');
             }
@@ -964,6 +970,7 @@
                 ['.sc-down', 'POST', '/Move/down'],
                 ['.sc-retry', 'POST', '/Retry'],
                 ['.sc-force', 'POST', '/Now'],
+                ['.sc-unforce', 'POST', '/Unforce'],
                 ['.sc-stop', 'POST', '/Stop']
             ];
             actions.forEach(function (a) {
@@ -994,22 +1001,36 @@
 
             api('GET', 'Status').then(function (s) {
                 var text, detail = [];
-                if (s.currentItemTitle) {
+                var bar = el('scStatusBar');
+
+                if (s.paused) {
+                    // Pauza musí být vidět na první pohled — jinak není poznat,
+                    // jestli se ještě něco na pozadí nezkouší.
+                    text = '⏸ <strong>Pozastaveno</strong> — samo se nic stahovat nebude, dokud nedáš ▶ Obnovit';
+                    bar.style.background = '#4a3b12';
+                    bar.style.borderLeft = '4px solid #ffb74d';
+                    el('scStatusProgressWrap').classList.add('hide');
+                } else if (s.currentItemTitle) {
                     var pct = s.currentBytesTotal > 0 ? Math.round(100 * s.currentBytesDone / s.currentBytesTotal) : 0;
                     text = '⬇️ Stahuji: <strong>' + esc(s.currentItemTitle) + '</strong> — ' + pct + ' % ('
                         + fmtBytes(s.currentBytesDone) + ' / ' + fmtBytes(s.currentBytesTotal) + ', '
                         + fmtBytes(s.currentSpeedBps) + '/s)';
+                    bar.style.background = '#202020';
+                    bar.style.borderLeft = '';
                     el('scStatusProgressWrap').classList.remove('hide');
                     el('scStatusProgress').style.width = pct + '%';
                 } else {
-                    text = s.paused ? '⏸ Worker pozastaven' : (esc(s.lastMessage || 'Nečinný'));
+                    text = esc(s.lastMessage || 'Nečinný');
+                    bar.style.background = s.outageReason ? '#40261a' : '#202020';
+                    bar.style.borderLeft = s.outageReason ? '4px solid #e57373' : '';
                     el('scStatusProgressWrap').classList.add('hide');
                 }
 
                 if (s.dailyBytes) detail.push('Dnes staženo: ' + fmtBytes(s.dailyBytes));
                 if (s.freeSpaceBytes) detail.push('Volné místo: ' + fmtBytes(s.freeSpaceBytes));
                 if (s.kraskaDaysLeft != null) detail.push('kra.sk předplatné: ' + s.kraskaDaysLeft + ' dní');
-                if (s.nextActionUtc) detail.push('Další akce: ' + new Date(s.nextActionUtc).toLocaleTimeString());
+                // Odpočet „další akce" u pozastaveného workeru nedává smysl
+                if (s.nextActionUtc && !s.paused) detail.push('Další akce: ' + new Date(s.nextActionUtc).toLocaleTimeString());
 
                 el('scStatusText').innerHTML = text;
                 el('scStatusDetail').textContent = detail.join(' · ');
@@ -1617,6 +1638,10 @@
             hideDone = !hideDone;
             saveFlag('sc-hide-done', hideDone);
             refreshQueue();
+        });
+
+        el('scProblemRetryAll').addEventListener('click', function () {
+            api('POST', 'Queue/RetryAll').then(refreshQueue);
         });
 
         el('scDoneClear').addEventListener('click', function () {

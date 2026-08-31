@@ -156,6 +156,60 @@ public sealed class DownloadQueue
         return ok;
     }
 
+    /// <summary>
+    /// „Zkusit znovu vše" — vrátí všechny položky z Problémů zpět do fronty
+    /// a vynuluje jim počítadlo pokusů. Vrací, kolik jich bylo.
+    /// </summary>
+    public int RetryAll()
+    {
+        int count;
+        lock (_lock)
+        {
+            var broken = _state.Items.Where(i => i.Status == QueueItemStatus.Error).ToList();
+            foreach (var item in broken)
+            {
+                item.Status = QueueItemStatus.Queued;
+                item.ErrorMessage = null;
+                item.FailCount = 0;
+            }
+
+            count = broken.Count;
+            if (count > 0)
+            {
+                SaveLocked();
+                _log($"queue: {count} položek z Problémů vráceno do fronty");
+            }
+        }
+
+        if (count > 0)
+        {
+            Wake();
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Zruší „⚡ přednost" (překliknutí, nebo chceš napřed něco jiného). Položka
+    /// zůstane tam, kde byla v ručním pořadí, a jde zase přetahovat.
+    /// </summary>
+    public bool Unforce(Guid id)
+    {
+        lock (_lock)
+        {
+            var item = _state.Items.FirstOrDefault(i => i.Id == id && i.ForceNow);
+            if (item == null)
+            {
+                return false;
+            }
+
+            item.ForceNow = false;
+            SaveLocked();
+            _log($"queue: \"{item.Title}\" — zrušena přednost");
+            return true;
+        }
+    }
+
     /// <summary>Posun položky ve frontě nahoru/dolů (ruční priorita). Vrací true při změně.</summary>
     public bool Move(Guid id, bool up)
     {
