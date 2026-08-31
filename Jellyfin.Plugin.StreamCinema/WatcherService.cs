@@ -149,10 +149,26 @@ public sealed class WatcherService : BackgroundService
             }
         }
 
+        // Klíče všeho, co je ve frontě (v jakémkoli stavu) — ať hlídač nezařazuje
+        // podruhé to, co už tam leží nebo se stáhlo. Bere se jednou za kontrolu.
+        var inQueue = new HashSet<string>(
+            _state.Queue.GetAll().Select(Dedup.MediaKey), StringComparer.Ordinal);
+
         if (item.Type == "movie")
         {
             if (item.MovieGrabbed && !force)
             {
+                return;
+            }
+
+            // Už stažený nebo už zařazený film znovu do fronty nepatří.
+            if (!force && IsHandled(Probe(item, null, null), cfg, inQueue))
+            {
+                _state.Watch.Update(item.Id, w =>
+                {
+                    w.MovieGrabbed = true;
+                    w.LastResult = "už stažené / ve frontě";
+                });
                 return;
             }
 
@@ -197,8 +213,19 @@ public sealed class WatcherService : BackgroundService
         var remaining = force ? int.MaxValue : Math.Max(0, target - todayCount);
 
         var queued = 0;
+        var alreadyHave = 0;
         foreach (var e in newEps)
         {
+            // Díl, který už je v knihovně nebo ve frontě, se jen odškrtne a jde se
+            // na další — nečerpá denní limit, takže fronta postupuje dál a neplní se
+            // pořád tím samým. (Typicky když se epizody stáhly ručně nebo hromadně.)
+            if (IsHandled(Probe(item, e.Season, e.Episode), cfg, inQueue))
+            {
+                grabbed.Add(e.Key);
+                alreadyHave++;
+                continue;
+            }
+
             if (queued >= remaining)
             {
                 break;
@@ -243,6 +270,10 @@ public sealed class WatcherService : BackgroundService
                 : completed
                     ? $"staženo {grabbed.Count} {Eps(grabbed.Count)}"
                     : still ? "čekám na dabing/stream u dalších epizod" : "žádná nová epizoda";
+            if (alreadyHave > 0 && queued == 0 && !completed)
+            {
+                w.LastResult += $" ({alreadyHave} už staženo/ve frontě)";
+            }
         });
 
         if (queued > 0)
@@ -382,6 +413,38 @@ public sealed class WatcherService : BackgroundService
         DvMode = cfg.DvMode,
         AtmosMode = cfg.AtmosMode,
     };
+
+    /// <summary>
+    /// Zástupná položka fronty pro jeden titul/epizodu — slouží jen k hledání,
+    /// jestli už to není stažené nebo zařazené (žádný stream se do ní neplní).
+    /// </summary>
+    private static QueueItem Probe(WatchItem item, int? season, int? episode)
+    {
+        var title = MediaOrganizer.CleanTitle(item.Title);
+        return new QueueItem
+        {
+            Title = title,
+            Year = item.Year,
+            MediaType = season == null ? ScMediaType.Movie : ScMediaType.Episode,
+            SeriesTitle = season == null ? null : title,
+            Season = season,
+            Episode = episode,
+        };
+    }
+
+    /// <summary>
+    /// Je titul/epizoda už vyřízená — leží v knihovně (jakákoli kvalita), nebo je
+    /// v jakémkoli stavu ve frontě? Takovou hlídač znovu nezařazuje a jde na další díl.
+    /// </summary>
+    private static bool IsHandled(QueueItem probe, PluginConfiguration cfg, HashSet<string> inQueue)
+    {
+        if (inQueue.Contains(Dedup.MediaKey(probe)))
+        {
+            return true;
+        }
+
+        return MediaOrganizer.FindExistingAll(cfg.MoviesPath, cfg.SeriesPath, probe).Count > 0;
+    }
 
     /// <summary>
     /// Nezbývá už co zařadit? (film stažený / u seriálu žádný backlog).
