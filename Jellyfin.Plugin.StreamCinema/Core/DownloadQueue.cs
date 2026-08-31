@@ -2,6 +2,19 @@ using System.Text.Json;
 
 namespace Jellyfin.Plugin.StreamCinema.Core;
 
+/// <summary>Výsledek pokusu o zařazení do fronty.</summary>
+public enum AddOutcome
+{
+    /// <summary>Zařazeno.</summary>
+    Added,
+
+    /// <summary>Tentýž stream už ve frontě/historii je.</summary>
+    DuplicateStream,
+
+    /// <summary>Tentýž film/epizoda ve stejné kvalitě už čeká nebo se právě stahuje.</summary>
+    DuplicateInQueue,
+}
+
 /// <summary>
 /// Persistentní fronta stahování + denní počítadlo. Stav žije v jednom JSON souboru,
 /// zápis je atomický (temp + move), takže restart Jellyfinu frontu neztratí.
@@ -248,7 +261,13 @@ public sealed class DownloadQueue
         return true;
     }
 
-    public void Add(QueueItem item)
+    /// <summary>
+    /// Zařadí položku do fronty. Odmítne dvě podoby duplicity:
+    /// (1) tentýž stream už ve frontě/historii je, (2) tentýž film/epizoda ve stejné
+    /// kvalitě už čeká nebo se právě stahuje — pátý sken téhož dílu nikdo nechce.
+    /// Jiná kvalita (3D vs. 1080p) duplicita NENÍ a projde.
+    /// </summary>
+    public AddOutcome Add(QueueItem item)
     {
         lock (_lock)
         {
@@ -260,7 +279,19 @@ public sealed class DownloadQueue
                 && i.Status is QueueItemStatus.Queued or QueueItemStatus.Downloading or QueueItemStatus.Done))
             {
                 _log($"queue: stream už ve frontě je, přeskakuji ({item.Title})");
-                return;
+                return AddOutcome.DuplicateStream;
+            }
+
+            // Tentýž obsah ve stejné kvalitě už čeká / se stahuje → nezařazovat znovu.
+            var media = Dedup.MediaKey(item);
+            var quality = Dedup.NormQuality(item.Quality);
+            if (_state.Items.Any(i =>
+                (i.Status is QueueItemStatus.Queued or QueueItemStatus.Downloading)
+                && Dedup.MediaKey(i) == media
+                && Dedup.NormQuality(i.Quality) == quality))
+            {
+                _log($"queue: \"{item.Title}\" ({item.Quality}) už ve frontě je, přeskakuji");
+                return AddOutcome.DuplicateInQueue;
             }
 
             // Nová položka jde na konec fronty (ruční pořadí ▲▼ ji pak může posunout)
@@ -268,6 +299,27 @@ public sealed class DownloadQueue
             _state.Items.Add(item);
             SaveLocked();
             _log($"queue: přidáno \"{item.Title}\" ({item.Quality})");
+            return AddOutcome.Added;
+        }
+    }
+
+    /// <summary>
+    /// Vyčistí dokončené (Done) a přeskočené (Skipped) z historie. Vrací počet.
+    /// Chybné položky („Problémy") zůstávají — ty se řeší ručně.
+    /// </summary>
+    public int ClearCompleted()
+    {
+        lock (_lock)
+        {
+            var removed = _state.Items.RemoveAll(i =>
+                i.Status is QueueItemStatus.Done or QueueItemStatus.Skipped);
+            if (removed > 0)
+            {
+                SaveLocked();
+                _log($"queue: vyčištěno {removed} dokončených položek");
+            }
+
+            return removed;
         }
     }
 

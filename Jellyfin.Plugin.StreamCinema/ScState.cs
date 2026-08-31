@@ -33,6 +33,35 @@ public sealed class ScState : IDisposable
     /// <summary>Runtime stav workeru pro /status endpoint (aktualizuje worker).</summary>
     public WorkerStatus Status { get; } = new();
 
+    // ── Probuzení hlídače (⚡ Zkontrolovat teď) ────────────────────
+    private readonly SemaphoreSlim _watchWake = new(0, 1);
+
+    /// <summary>Hlídač: čekání mezi koly, přerušitelné přes <see cref="WakeWatcher"/>.</summary>
+    public async Task<bool> WaitWatcherAsync(TimeSpan delay, CancellationToken ct)
+    {
+        try
+        {
+            return await _watchWake.WaitAsync(delay, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Probudí hlídač, aby hned prošel splatné (a vynucené) položky.</summary>
+    public void WakeWatcher()
+    {
+        try
+        {
+            _watchWake.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // signál už čeká — stačí jeden
+        }
+    }
+
     // ── Zrušení běžícího stahování (⏹ Zastavit / Pozastavit) ──────
     private readonly object _dlLock = new();
     private CancellationTokenSource? _dlCts;

@@ -18,6 +18,9 @@ public static class MediaOrganizer
     private static readonly Regex KodiTag = new(@"\[/?[A-Za-z][^\]]*\]", RegexOptions.Compiled);
     private static readonly Regex TrailingYear = new(@"\s*\(\d{4}\)\s*$", RegexOptions.Compiled);
 
+    // Tag s kvalitou a jazykem na konci názvu souboru: " - [1080p CZ,EN]"
+    private static readonly Regex TagRe = new(@"\[([^\]]*)\]", RegexOptions.Compiled);
+
     /// <summary>Odstraní znaky nepovolené v názvech souborů a ořízne tečky/mezery na konci.</summary>
     public static string Sanitize(string name)
     {
@@ -93,52 +96,151 @@ public static class MediaOrganizer
         return Path.Combine(dir, $"{baseName}.{code}.srt");
     }
 
-    /// <summary>
-    /// Najde už stažený soubor pro položku (jakákoli kvalita/jazyk/přípona) — aby se
-    /// nestahovalo, co na disku je. Hledá podle základu názvu bez tagu „[kvalita jazyk]".
-    /// Ignoruje nedokončené .part. Vrací cestu, nebo null.
-    /// </summary>
-    public static string? FindExisting(string moviesPath, string seriesPath, QueueItem item)
+    /// <summary>Jeden už stažený soubor patřící k položce (pro rozpoznání duplicit).</summary>
+    public sealed class ExistingFile
     {
+        public string Path { get; set; } = string.Empty;
+
+        /// <summary>Kvalita vyčtená z tagu v názvu (" - [1080p CZ]"), nebo null.</summary>
+        public string? Quality { get; set; }
+
+        public long SizeBytes { get; set; }
+    }
+
+    /// <summary>
+    /// Všechny už stažené soubory patřící k položce (jakákoli kvalita/jazyk/přípona).
+    /// Hledá podle základu názvu bez tagu „[kvalita jazyk]", ignoruje .part a .srt.
+    /// </summary>
+    public static List<ExistingFile> FindExistingAll(string moviesPath, string seriesPath, QueueItem item)
+    {
+        var result = new List<ExistingFile>();
         try
         {
-            string dir;
-            string baseName;
-
-            if (item.MediaType == ScMediaType.Episode)
-            {
-                var clean = CleanTitle(item.SeriesTitle ?? item.Title);
-                var season = item.Season ?? 1;
-                dir = Path.Combine(seriesPath, Sanitize(clean), $"Season {season:D2}");
-                baseName = Sanitize($"{FormatTitle(clean, item.Year)} - S{season:D2}E{item.Episode ?? 1:D2}");
-            }
-            else
-            {
-                var movie = Sanitize(FormatTitle(CleanTitle(item.Title), item.Year));
-                dir = Path.Combine(moviesPath, movie);
-                baseName = movie;
-            }
-
+            var (dir, baseName) = ExistingBase(moviesPath, seriesPath, item);
             if (!Directory.Exists(dir))
             {
-                return null;
+                return result;
             }
 
             foreach (var f in Directory.EnumerateFiles(dir, baseName + "*"))
             {
-                if (!f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
-                    && !f.EndsWith(".srt", StringComparison.OrdinalIgnoreCase))
+                if (f.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
+                    || f.EndsWith(".srt", StringComparison.OrdinalIgnoreCase))
                 {
-                    return f;
+                    continue;
                 }
-            }
 
-            return null;
+                long size = 0;
+                try
+                {
+                    size = new FileInfo(f).Length;
+                }
+                catch (Exception)
+                {
+                    // velikost je jen vodítko — bez ní se rozhoduje podle kvality
+                }
+
+                result.Add(new ExistingFile { Path = f, Quality = QualityFromFileName(f), SizeBytes = size });
+            }
         }
         catch (Exception)
         {
-            return null; // nedostupná cesta apod. — raději stáhnout, než spadnout
+            // nedostupná cesta apod. — raději stáhnout, než spadnout
         }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Najde už stažený soubor, který je pro tuhle položku DUPLICITA — tj. stejná
+    /// kvalita a (pokud velikosti známe) i velikost v rámci tolerance. Jiná kvalita
+    /// (Stalingrad ve 3D vs. 1080p) duplicita NENÍ — takovou verzi chce uživatel stáhnout.
+    /// Vrací nalezený soubor, nebo null.
+    /// </summary>
+    public static ExistingFile? FindDuplicate(
+        string moviesPath, string seriesPath, QueueItem item, int tolerancePercent)
+    {
+        var wanted = Dedup.NormQuality(item.Quality);
+        foreach (var f in FindExistingAll(moviesPath, seriesPath, item))
+        {
+            var have = Dedup.NormQuality(f.Quality);
+            if (wanted.Length > 0 && have.Length > 0 && wanted != have)
+            {
+                continue;
+            }
+
+            if (!Dedup.SameSize(item.SizeBytes, f.SizeBytes, tolerancePercent))
+            {
+                continue;
+            }
+
+            return f;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Cesta, která nepřepíše existující soubor: „… .mkv" → „… (2).mkv".
+    /// Používá se, když na disku je jiná verze se stejným tagem (stejná kvalita,
+    /// jiná velikost) — obě verze mají zůstat.
+    /// </summary>
+    public static string EnsureUniquePath(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return path;
+        }
+
+        var dir = Path.GetDirectoryName(path) ?? string.Empty;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+        for (var n = 2; n < 100; n++)
+        {
+            var candidate = Path.Combine(dir, $"{name} ({n}){ext}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return path;
+    }
+
+    /// <summary>Složka a základ názvu (bez tagu) pro hledání už stažených souborů.</summary>
+    private static (string Dir, string BaseName) ExistingBase(string moviesPath, string seriesPath, QueueItem item)
+    {
+        if (item.MediaType == ScMediaType.Episode)
+        {
+            var clean = CleanTitle(item.SeriesTitle ?? item.Title);
+            var season = item.Season ?? 1;
+            var dir = Path.Combine(seriesPath, Sanitize(clean), $"Season {season:D2}");
+            var baseName = Sanitize($"{FormatTitle(clean, item.Year)} - S{season:D2}E{item.Episode ?? 1:D2}");
+            return (dir, baseName);
+        }
+
+        var movie = Sanitize(FormatTitle(CleanTitle(item.Title), item.Year));
+        return (Path.Combine(moviesPath, movie), movie);
+    }
+
+    /// <summary>Kvalita z tagu v názvu souboru: „Film (2013) - [1080p CZ].mkv" → „1080p".</summary>
+    private static string? QualityFromFileName(string path)
+    {
+        var name = Path.GetFileNameWithoutExtension(path);
+        var matches = TagRe.Matches(name);
+        if (matches.Count == 0)
+        {
+            return null;
+        }
+
+        var tag = matches[matches.Count - 1].Groups[1].Value.Trim();
+        if (tag.Length == 0)
+        {
+            return null;
+        }
+
+        var space = tag.IndexOf(' ');
+        return space > 0 ? tag.Substring(0, space) : tag;
     }
 
     /// <summary>Přípona z URL kra.sk (fallback .mkv).</summary>

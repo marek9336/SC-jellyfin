@@ -246,12 +246,27 @@ public class ScController : ControllerBase
             Quality = request.Quality,
             Language = request.Language,
             SizeText = request.SizeText,
+            SizeBytes = request.SizeBytes ?? 0,
             DurationSec = request.DurationSec,
         };
 
-        _state.Queue.Add(item);
-        return Ok(new { success = true, id = item.Id });
+        var outcome = _state.Queue.Add(item);
+        return Ok(new
+        {
+            success = outcome == AddOutcome.Added,
+            id = item.Id,
+            duplicate = outcome != AddOutcome.Added,
+            message = DuplicateMessage(outcome),
+        });
     }
+
+    /// <summary>Hláška k výsledku zařazení (null = zařazeno).</summary>
+    private static string? DuplicateMessage(AddOutcome outcome) => outcome switch
+    {
+        AddOutcome.DuplicateStream => "Tenhle stream už ve frontě nebo v historii je.",
+        AddOutcome.DuplicateInQueue => "Totéž ve stejné kvalitě už ve frontě čeká nebo se stahuje.",
+        _ => null,
+    };
 
     /// <summary>
     /// ⚡ Automatický výběr: načte streamy z /Play/..., vybere nejlepší podle
@@ -308,12 +323,20 @@ public class ScController : ControllerBase
                 Quality = best.Quality,
                 Language = best.Languages.Count > 0 ? string.Join(",", best.Languages) : best.Language,
                 SizeText = best.SizeText,
+                SizeBytes = best.SizeBytes ?? 0,
                 DurationSec = best.DurationSec,
             };
 
-            _state.Queue.Add(item);
+            var outcome = _state.Queue.Add(item);
             _logger.LogInformation("StreamCinema: autoselect \"{Title}\" → {Reason}", item.Title, reason);
-            return Ok(new { success = true, id = item.Id, picked = reason });
+            return Ok(new
+            {
+                success = outcome == AddOutcome.Added,
+                id = item.Id,
+                picked = reason,
+                duplicate = outcome != AddOutcome.Added,
+                message = DuplicateMessage(outcome),
+            });
         }
         catch (Exception ex)
         {
@@ -357,6 +380,11 @@ public class ScController : ControllerBase
                 errorMessage = i.ErrorMessage,
                 bytesDone = i.BytesDone,
                 bytesTotal = i.BytesTotal,
+                sizeBytes = i.SizeBytes,
+                failCount = i.FailCount,
+                stoppedPercent = i.StoppedPercent,
+                targetPath = i.TargetPath,
+                completedUtc = i.CompletedUtc,
                 addedUtc = i.AddedUtc,
             })
             .ToList();
@@ -373,6 +401,16 @@ public class ScController : ControllerBase
     {
         _state.CancelDownload(id); // pokud zrovna běží, zastavit přenos
         return Ok(new { success = _state.Queue.Remove(id, force: true) });
+    }
+
+    /// <summary>
+    /// Vyčistí dokončené a přeskočené z historie (sekce „Dokončeno").
+    /// Položky v „Problémech" zůstávají.
+    /// </summary>
+    [HttpPost("Queue/ClearCompleted")]
+    public ActionResult ClearCompleted()
+    {
+        return Ok(new { removed = _state.Queue.ClearCompleted() });
     }
 
     /// <summary>Vrátí chybnou položku zpět do fronty.</summary>
@@ -489,6 +527,12 @@ public class ScController : ControllerBase
             lastResult = w.LastResult,
             maxQuality = w.MaxQuality,
             maxFileSizeGb = w.MaxFileSizeGb,
+            completed = w.Completed,
+            completedUtc = w.CompletedUtc,
+            keepWatching = w.KeepWatching,
+            recheckIntervalDays = w.RecheckIntervalDays,
+            grabbedCount = w.Type == "series" ? w.Grabbed.Count : (w.MovieGrabbed ? 1 : 0),
+            lastCheckedUtc = w.LastCheckedUtc,
         }).ToList();
         return Ok(new { items });
     }
@@ -541,8 +585,43 @@ public class ScController : ControllerBase
             {
                 w.MaxFileSizeGb = request.MaxFileSizeGb < 0 ? null : request.MaxFileSizeGb;
             }
+
+            // Dokončený běžící seriál: hlídat dál nové epizody (jinak se už nekontroluje).
+            if (request.KeepWatching != null)
+            {
+                w.KeepWatching = request.KeepWatching.Value;
+            }
+
+            if (request.RecheckIntervalDays != null)
+            {
+                w.RecheckIntervalDays = request.RecheckIntervalDays < 1 ? null : request.RecheckIntervalDays;
+            }
         });
         return Ok(new { success = true });
+    }
+
+    /// <summary>
+    /// ⚡ Zkontrolovat teď — obejde interval i denní limit epizod a zařadí do fronty
+    /// vše, co projde autoselectem. Hlídač se hned probudí.
+    /// </summary>
+    [HttpPost("Watch/{id}/CheckNow")]
+    public ActionResult CheckWatchNow([FromRoute] Guid id)
+    {
+        var found = false;
+        _state.Watch.Update(id, w =>
+        {
+            w.ForceCheck = true;
+            w.Enabled = true;
+            w.LastResult = "kontroluji…";
+            found = true;
+        });
+
+        if (found)
+        {
+            _state.WakeWatcher();
+        }
+
+        return Ok(new { success = found });
     }
 
     /// <summary>Odebere sledovanou položku.</summary>
@@ -573,6 +652,12 @@ public class UpdateWatchRequest
     public int? IntervalDays { get; set; }
 
     public bool? Enabled { get; set; }
+
+    /// <summary>U dokončené položky: hlídat dál nové epizody.</summary>
+    public bool? KeepWatching { get; set; }
+
+    /// <summary>Interval kontroly dokončené položky (dny); &lt; 1 = globální nastavení.</summary>
+    public int? RecheckIntervalDays { get; set; }
 
     /// <summary>Prázdné = zpět na globální nastavení.</summary>
     public string? MaxQuality { get; set; }
@@ -653,6 +738,9 @@ public class AddQueueRequest
     public string? Language { get; set; }
 
     public string? SizeText { get; set; }
+
+    /// <summary>Velikost streamu v bajtech — pro rozpoznání „tenhle soubor už mám".</summary>
+    public long? SizeBytes { get; set; }
 
     public int? DurationSec { get; set; }
 }

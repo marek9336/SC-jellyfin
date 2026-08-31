@@ -58,6 +58,12 @@ public class QueueItem
     public string? Language { get; set; }
     public string? SizeText { get; set; }
 
+    /// <summary>
+    /// Velikost streamu v bajtech (z katalogu). Slouží k porovnání s už staženým
+    /// souborem — stejná kvalita + stejná velikost = tentýž soubor, nestahovat znovu.
+    /// </summary>
+    public long SizeBytes { get; set; }
+
     public QueueItemStatus Status { get; set; } = QueueItemStatus.Queued;
 
     public string? ErrorMessage { get; set; }
@@ -75,6 +81,12 @@ public class QueueItem
 
     /// <summary>Počet neúspěšných pokusů (pro automatický retry s odstupem).</summary>
     public int FailCount { get; set; }
+
+    /// <summary>
+    /// Na kolika procentech se stahování naposledy přerušilo. Ukazuje se u položek
+    /// v sekci „Problémy", ať je vidět, jestli to spadlo hned, nebo těsně před koncem.
+    /// </summary>
+    public int StoppedPercent { get; set; }
 
     /// <summary>
     /// „Stáhnout teď" — položka má přednost, obejde časové okno a pauzy mezi soubory.
@@ -184,6 +196,31 @@ public class WatchItem
 
     /// <summary>Zbývají nezpracované epizody → re-check denně místo dle intervalu.</summary>
     public bool HasBacklog { get; set; }
+
+    /// <summary>
+    /// Hotovo — film stažen, u seriálu jsou zařazené všechny nalezené epizody.
+    /// Položka se v GUI přesune do sekce „Dokončené".
+    /// </summary>
+    public bool Completed { get; set; }
+
+    public DateTime? CompletedUtc { get; set; }
+
+    /// <summary>
+    /// U dokončeného seriálu: hlídat dál nové epizody (běžící seriál). Vypnuto =
+    /// ukončený seriál, který se už nikdy nekontroluje.
+    /// </summary>
+    public bool KeepWatching { get; set; }
+
+    /// <summary>
+    /// Interval kontroly dokončené položky ve dnech (null = globální nastavení, typicky 30).
+    /// </summary>
+    public int? RecheckIntervalDays { get; set; }
+
+    /// <summary>
+    /// Vynucená kontrola „hned" (tlačítko ⚡ v Hlídaných): obejde interval i denní
+    /// limit epizod a zařadí do fronty všechno, co projde autoselectem.
+    /// </summary>
+    public bool ForceCheck { get; set; }
 
     public string? LastResult { get; set; }
 }

@@ -106,6 +106,37 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int WindowJitterMinutes { get; set; } = 15;
 
+    /// <summary>
+    /// Náhodné zkrácení konce okna (minuty). Worker si každý den vylosuje 0–N minut
+    /// a o tolik dřív přestane pouštět nová stahování — konec pak taky nevypadá
+    /// jako naplánovaný stroj. 0 = vypnuto. Na okno „celý den" se neuplatní.
+    /// </summary>
+    public int WindowEndJitterMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Místo jednoho okna pro všechny dny použít rozvrh po dnech v týdnu
+    /// (viz <see cref="WeeklyWindow"/>). Vypnuto = platí WindowFromHour/WindowToHour.
+    /// </summary>
+    public bool UseWeeklyWindow { get; set; }
+
+    /// <summary>
+    /// Rozvrh po dnech: "1:0-0;2:22-6;6:off" (1 = pondělí … 7 = neděle,
+    /// "off" = ten den nestahovat, od == do = celý den). Viz Core/Schedule.cs.
+    /// </summary>
+    public string WeeklyWindow { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Kolikrát se po pádu stahování zkusí navázat, než položka spadne do „Problémů".
+    /// 2 = dva další pokusy (celkem tři). Mezi pokusy je náhodný odstup (backoff).
+    /// </summary>
+    public int RetryAttempts { get; set; } = 2;
+
+    /// <summary>
+    /// Tolerance velikosti v procentech při rozpoznání „už to mám" (stejná kvalita
+    /// a velikost do X % = tentýž soubor → nestahovat znovu).
+    /// </summary>
+    public int DuplicateSizeTolerancePercent { get; set; } = 5;
+
     /// <summary>Po dokončení stahování spustit sken knihovny.</summary>
     public bool TriggerLibraryScan { get; set; } = true;
 
@@ -132,4 +163,10 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>Paranoia mód: další stahování až po uplynutí délky staženého obsahu.</summary>
     public bool ParanoiaMode { get; set; }
+
+    /// <summary>
+    /// Jak často kontrolovat DOKONČENOU hlídanou položku, u které je zapnuté
+    /// „hlídat nové epizody" (dny). Běžící seriál stačí kontrolovat jednou za měsíc.
+    /// </summary>
+    public int WatchRecheckIntervalDays { get; set; } = 30;
 }

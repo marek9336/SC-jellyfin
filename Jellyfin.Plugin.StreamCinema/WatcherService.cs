@@ -47,7 +47,8 @@ public sealed class WatcherService : BackgroundService
                 _logger.LogWarning(ex, "StreamCinema hlídač: chyba, pokračuji");
             }
 
-            await SafeDelay(Poll, ct).ConfigureAwait(false);
+            // Čekání jde přerušit tlačítkem ⚡ „Zkontrolovat teď" v Hlídaných.
+            await _state.WaitWatcherAsync(Poll, ct).ConfigureAwait(false);
         }
     }
 
@@ -63,21 +64,52 @@ public sealed class WatcherService : BackgroundService
 
         foreach (var item in _state.Watch.GetAll())
         {
-            if (!item.Enabled)
+            // ⚡ Vynucená kontrola obchází pauzu, interval i denní limit epizod.
+            var force = item.ForceCheck;
+
+            // Dokončeno = nezbývá co zařadit A fronta už z položky nic nestahuje.
+            // Tahle kontrola je lokální (bez dotazu do katalogu), takže může běžet
+            // každé kolo — položka se do „Dokončených" přesune hned po dostažení.
+            if (!force && !item.Completed && NothingLeft(item) && !HasPendingDownloads(item))
             {
+                _state.Watch.Update(item.Id, w =>
+                {
+                    w.Completed = true;
+                    w.CompletedUtc ??= DateTime.UtcNow;
+                    w.LastResult = w.Type == "series"
+                        ? $"staženo {w.Grabbed.Count} {Eps(w.Grabbed.Count)}"
+                        : "staženo";
+                });
                 continue;
             }
 
-            var baseDays = item.HasBacklog ? 1 : Math.Max(1, item.IntervalDays);
-            var due = (item.LastCheckedUtc ?? DateTime.MinValue).AddDays(baseDays);
-            if (DateTime.UtcNow < due)
+            if (!force)
             {
-                continue;
+                if (!item.Enabled)
+                {
+                    continue;
+                }
+
+                // Dokončené se kontrolují jen se zapnutým „hlídat nové epizody"
+                // (běžící seriál) — a to řidčeji, typicky jednou za měsíc.
+                if (item.Completed && !item.KeepWatching)
+                {
+                    continue;
+                }
+
+                var baseDays = item.Completed
+                    ? Math.Max(1, item.RecheckIntervalDays ?? cfg.WatchRecheckIntervalDays)
+                    : item.HasBacklog ? 1 : Math.Max(1, item.IntervalDays);
+                var due = (item.LastCheckedUtc ?? DateTime.MinValue).AddDays(baseDays);
+                if (DateTime.UtcNow < due)
+                {
+                    continue;
+                }
             }
 
             try
             {
-                await Check(item, cfg, opts, ct).ConfigureAwait(false);
+                await Check(item, cfg, opts, force, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -89,11 +121,16 @@ public sealed class WatcherService : BackgroundService
                 _state.Watch.Update(item.Id, w => w.LastResult = "chyba: " + ex.Message);
             }
 
-            _state.Watch.Update(item.Id, w => w.LastCheckedUtc = DateTime.UtcNow);
+            _state.Watch.Update(item.Id, w =>
+            {
+                w.LastCheckedUtc = DateTime.UtcNow;
+                w.ForceCheck = false;
+            });
         }
     }
 
-    private async Task Check(WatchItem item, PluginConfiguration cfg, StreamSelectorOptions globalOpts, CancellationToken ct)
+    private async Task Check(
+        WatchItem item, PluginConfiguration cfg, StreamSelectorOptions globalOpts, bool force, CancellationToken ct)
     {
         // Per-položkový override kvality/velikosti (např. tenhle film chci ve 4K,
         // i když globálně stahuju 1080p).
@@ -114,7 +151,7 @@ public sealed class WatcherService : BackgroundService
 
         if (item.Type == "movie")
         {
-            if (item.MovieGrabbed)
+            if (item.MovieGrabbed && !force)
             {
                 return;
             }
@@ -123,12 +160,13 @@ public sealed class WatcherService : BackgroundService
             var (best, reason) = StreamSelector.SelectBest(streams, opts);
             if (best != null)
             {
-                Enqueue(item, best, isEp: false, 0, 0);
+                var outcome = Enqueue(item, best, isEp: false, 0, 0);
                 _state.Watch.Update(item.Id, w =>
                 {
                     w.MovieGrabbed = true;
-                    w.Enabled = false;
-                    w.LastResult = "staženo: " + reason;
+                    w.LastResult = outcome == AddOutcome.Added
+                        ? "zařazeno do fronty: " + reason
+                        : "už ve frontě / staženo (" + reason + ")";
                 });
                 _logger.LogInformation("StreamCinema hlídač: film \"{Title}\" → fronta ({Reason})", item.Title, reason);
             }
@@ -153,7 +191,10 @@ public sealed class WatcherService : BackgroundService
         var target = _random.Next(
             Math.Max(0, cfg.EpisodesPerDayMin),
             Math.Max(cfg.EpisodesPerDayMin, cfg.EpisodesPerDayMax) + 1);
-        var remaining = Math.Max(0, target - todayCount);
+
+        // ⚡ Vynuceně: zařadit všechny nalezené epizody naráz. Stahování je i tak
+        // po jednom s pauzami a limity — denní strop epizod je jen o zařazování.
+        var remaining = force ? int.MaxValue : Math.Max(0, target - todayCount);
 
         var queued = 0;
         foreach (var e in newEps)
@@ -176,13 +217,32 @@ public sealed class WatcherService : BackgroundService
         }
 
         var still = newEps.Any(e => !grabbed.Contains(e.Key));
+
+        // Hotovo = všechny nalezené epizody jsou zařazené a nic nezbývá. Položka se
+        // v GUI přesune do „Dokončené"; dál se kontroluje jen se zapnutým hlídáním
+        // nových epizod (u běžících seriálů), a to jednou za měsíc.
+        var completed = !still && grabbed.Count > 0 && !HasPendingDownloads(item);
         _state.Watch.Update(item.Id, w =>
         {
             w.Grabbed = grabbed.OrderBy(x => x).ToList();
             w.TodayDate = today;
             w.TodayCount = todayCount + queued;
             w.HasBacklog = still;
-            w.LastResult = queued > 0 ? $"zařazeno {queued} epizod dnes" : "žádná nová epizoda ke stažení";
+            w.Completed = completed;
+            if (completed)
+            {
+                w.CompletedUtc ??= DateTime.UtcNow;
+            }
+            else
+            {
+                w.CompletedUtc = null;
+            }
+
+            w.LastResult = queued > 0
+                ? $"zařazeno {queued} {Eps(queued)} (celkem {grabbed.Count}" + (still ? ", další čekají)" : ")")
+                : completed
+                    ? $"staženo {grabbed.Count} {Eps(grabbed.Count)}"
+                    : still ? "čekám na dabing/stream u dalších epizod" : "žádná nová epizoda";
         });
 
         if (queued > 0)
@@ -284,7 +344,7 @@ public sealed class WatcherService : BackgroundService
         return ScCatalog.ParseStreams(doc);
     }
 
-    private void Enqueue(WatchItem item, StreamOption best, bool isEp, int season, int episode)
+    private AddOutcome Enqueue(WatchItem item, StreamOption best, bool isEp, int season, int episode)
     {
         var title = MediaOrganizer.CleanTitle(item.Title);
         var qi = new QueueItem
@@ -301,9 +361,10 @@ public sealed class WatcherService : BackgroundService
             Quality = best.Quality,
             Language = best.Language ?? (best.Languages.Count > 0 ? string.Join(",", best.Languages) : null),
             SizeText = best.SizeText,
+            SizeBytes = best.SizeBytes ?? 0,
             DurationSec = best.DurationSec,
         };
-        _state.Queue.Add(qi);
+        return _state.Queue.Add(qi);
     }
 
     private static StreamSelectorOptions BuildOptions(PluginConfiguration cfg) => new()
@@ -321,6 +382,26 @@ public sealed class WatcherService : BackgroundService
         DvMode = cfg.DvMode,
         AtmosMode = cfg.AtmosMode,
     };
+
+    /// <summary>
+    /// Nezbývá už co zařadit? (film stažený / u seriálu žádný backlog).
+    /// Neznamená to ještě „dokončeno" — položky můžou pořád čekat ve frontě.
+    /// </summary>
+    private static bool NothingLeft(WatchItem item) =>
+        item.Type == "series" ? !item.HasBacklog && item.Grabbed.Count > 0 : item.MovieGrabbed;
+
+    /// <summary>Čeká/stahuje se ještě něco z téhle sledované položky ve frontě?</summary>
+    private bool HasPendingDownloads(WatchItem item)
+    {
+        var title = MediaOrganizer.CleanTitle(item.Title);
+        return _state.Queue.GetAll().Any(q =>
+            (q.Status is QueueItemStatus.Queued or QueueItemStatus.Downloading)
+            && string.Equals(
+                MediaOrganizer.CleanTitle(q.SeriesTitle ?? q.Title), title, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Český tvar slova „epizoda" podle počtu (1 / 2–4 / 5+).</summary>
+    private static string Eps(int n) => n == 1 ? "epizoda" : n >= 2 && n <= 4 ? "epizody" : "epizod";
 
     private static async Task SafeDelay(TimeSpan delay, CancellationToken ct)
     {

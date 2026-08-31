@@ -23,6 +23,11 @@ public sealed class DownloadWorkerService : BackgroundService
     // Den (yyyy-MM-dd), pro který už byl aplikován náhodný rozptyl startu okna.
     private string? _windowJitterDay;
 
+    // Náhodné zkrácení konce okna — losuje se jednou denně, ať konec stahování
+    // nevypadá jako na povel (viz WindowEndJitterMinutes).
+    private string? _windowEndJitterDay;
+    private int _windowEndJitterMinutes;
+
     public DownloadWorkerService(ScState state, ILibraryManager libraryManager, ILogger<DownloadWorkerService> logger)
     {
         _state = state;
@@ -86,12 +91,20 @@ public sealed class DownloadWorkerService : BackgroundService
             return;
         }
 
-        // Časové okno (From == To → vypnuto). „Stáhnout teď" okno obchází.
-        if (!item.ForceNow
-            && cfg.WindowFromHour != cfg.WindowToHour
-            && !InWindow(DateTime.Now.Hour, cfg.WindowFromHour, cfg.WindowToHour))
+        // Časové okno — buď jedno globální (From == To → vždy), nebo rozvrh po dnech
+        // v týdnu. Konec okna se navíc denně náhodně zkracuje (WindowEndJitterMinutes).
+        // „Stáhnout teď" okno obchází.
+        if (!item.ForceNow && !Schedule.IsOpen(
+                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour,
+                WindowEndJitter(cfg), DateTime.Now))
         {
-            status.LastMessage = $"Mimo časové okno ({cfg.WindowFromHour}:00–{cfg.WindowToHour}:00), čekám";
+            var today = Schedule.Describe(
+                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour, DateTime.Now);
+            var next = Schedule.NextOpen(
+                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour, DateTime.Now);
+            status.LastMessage = next != null
+                ? $"Mimo časové okno ({today}), další okno {next.Value:d.M. H:mm}"
+                : $"Mimo časové okno ({today}), čekám";
             await _state.Queue.WaitOrWakeAsync(BlockedPoll, ct).ConfigureAwait(false);
             return;
         }
@@ -99,7 +112,7 @@ public sealed class DownloadWorkerService : BackgroundService
         // Rozptyl startu: první denní stahování v okně odložit o náhodných 0–N minut,
         // ať to nezačíná přesně na začátku okna (anti-ban). „Stáhnout teď" obchází.
         if (!item.ForceNow
-            && cfg.WindowFromHour != cfg.WindowToHour
+            && (cfg.UseWeeklyWindow || cfg.WindowFromHour != cfg.WindowToHour)
             && cfg.WindowJitterMinutes > 0)
         {
             var today = DateTime.Now.ToString("yyyy-MM-dd");
@@ -137,24 +150,31 @@ public sealed class DownloadWorkerService : BackgroundService
             return;
         }
 
-        // Už staženo? Nestahovat znovu (šetří objem = anti-ban). Tlačítko ↻ v historii
-        // nastaví Overwrite a tím se kontrola přeskočí a soubor se přepíše.
+        // Už staženo ve STEJNÉ kvalitě? Nestahovat znovu (šetří objem = anti-ban).
+        // Jiná kvalita (Stalingrad ve 3D vs. 1080p) se stáhne — je to jiná verze.
+        // Tlačítko ↻ v historii nastaví Overwrite a kontrola se přeskočí.
         if (!item.Overwrite)
         {
-            var existing = MediaOrganizer.FindExisting(cfg.MoviesPath, cfg.SeriesPath, item);
-            if (existing != null)
+            var dup = MediaOrganizer.FindDuplicate(
+                cfg.MoviesPath, cfg.SeriesPath, item, cfg.DuplicateSizeTolerancePercent);
+            if (dup != null)
             {
                 _logger.LogInformation(
-                    "StreamCinema: \"{Title}\" už existuje ({Path}) — přeskakuji", DisplayTitle(item), existing);
+                    "StreamCinema: \"{Title}\" už je v knihovně ve stejné kvalitě ({Path}) — přeskakuji",
+                    DisplayTitle(item), dup.Path);
                 _state.Queue.Update(item.Id, i =>
                 {
                     i.Status = QueueItemStatus.Skipped;
-                    i.TargetPath = existing;
+                    i.TargetPath = dup.Path;
                     i.CompletedUtc = DateTime.UtcNow;
-                    i.ErrorMessage = "Soubor už je v knihovně (↻ stáhne znovu a přepíše)";
+                    i.ErrorMessage =
+                        $"Stejná kvalita už v knihovně ({dup.Quality ?? "?"}, {Dedup.FormatSize(dup.SizeBytes)}) "
+                        + "— nestahuji (↻ stáhne znovu a přepíše)";
                     i.ForceNow = false;
                 });
                 status.LastMessage = $"Přeskočeno (už staženo): {DisplayTitle(item)}";
+
+                // Nic se nestahovalo → žádná anti-ban pauza, hned na další položku.
                 return;
             }
         }
@@ -231,6 +251,14 @@ public sealed class DownloadWorkerService : BackgroundService
 
             var extension = MediaOrganizer.ExtensionFromUrl(url);
             var finalPath = MediaOrganizer.BuildTargetPath(cfg.MoviesPath, cfg.SeriesPath, item, extension);
+
+            // Když na disku leží jiná verze se stejným tagem (stejná kvalita, jiná
+            // velikost — duplicitní by se sem nedostala), nepřepisovat ji: „… (2).mkv".
+            if (!item.Overwrite)
+            {
+                finalPath = MediaOrganizer.EnsureUniquePath(finalPath);
+            }
+
             var partPath = finalPath + ".part";
 
             _logger.LogInformation("StreamCinema: stahuji \"{Title}\" → {Path}", DisplayTitle(item), finalPath);
@@ -333,10 +361,12 @@ public sealed class DownloadWorkerService : BackgroundService
             // Uživatelské zastavení (⏹ / Pozastavit) — vrátit do fronty bez přednosti,
             // .part zůstává, příště se naváže přes HTTP Range
             _logger.LogInformation("StreamCinema: stahování \"{Title}\" zastaveno uživatelem", DisplayTitle(item));
+            var stoppedAt = Percent(status.CurrentBytesDone, status.CurrentBytesTotal);
             _state.Queue.Update(item.Id, i =>
             {
                 i.Status = QueueItemStatus.Queued;
                 i.ForceNow = false;
+                i.StoppedPercent = stoppedAt;
             });
             status.LastMessage = "Stahování zastaveno uživatelem";
         }
@@ -344,39 +374,65 @@ public sealed class DownloadWorkerService : BackgroundService
         {
             // Trvalá chyba (vadný/šifrovaný ident) — žádné opakování, rovnou Error.
             _logger.LogWarning("StreamCinema: \"{Title}\" — trvalá chyba, neopakuji: {Msg}", DisplayTitle(item), ex.Message);
+            var stoppedAt = Percent(status.CurrentBytesDone, status.CurrentBytesTotal);
             _state.Queue.Update(item.Id, i =>
             {
                 i.Status = QueueItemStatus.Error;
                 i.ErrorMessage = ex.Message;
+                i.StoppedPercent = stoppedAt;
                 i.ForceNow = false;
             });
-            status.LastMessage = $"Chyba: {ex.Message}";
+            status.LastMessage = $"Problém: {ex.Message}";
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "StreamCinema: stahování \"{Title}\" selhalo", DisplayTitle(item));
             var failCount = item.FailCount + 1;
+            var maxRetries = Math.Max(0, cfg.RetryAttempts);
+            var stoppedAt = Percent(status.CurrentBytesDone, status.CurrentBytesTotal);
+            var giveUp = failCount > maxRetries;
             _state.Queue.Update(item.Id, i =>
             {
-                i.FailCount++;
+                i.FailCount = failCount;
                 i.ErrorMessage = ex.Message;
-                // Do 3 pokusů automatický retry (položka zůstane ve frontě), pak Error
-                i.Status = i.FailCount >= 3 ? QueueItemStatus.Error : QueueItemStatus.Queued;
-                if (i.Status == QueueItemStatus.Error)
+                i.StoppedPercent = stoppedAt;
+
+                // Po pádu se stahování zkusí navázat (RetryAttempts krát), pak spadne
+                // do „Problémů" i s důvodem a procentem, kde se to zaseklo.
+                i.Status = giveUp ? QueueItemStatus.Error : QueueItemStatus.Queued;
+                if (giveUp)
                 {
                     i.ForceNow = false; // definitivní chyba ruší přednost
                 }
             });
 
+            status.CurrentItemId = null;
+            status.CurrentItemTitle = null;
+            status.CurrentSpeedBps = 0;
+
+            if (giveUp)
+            {
+                _logger.LogWarning(
+                    "StreamCinema: \"{Title}\" → Problémy po {N} pokusech (zastaveno na {Pct} %)",
+                    DisplayTitle(item), failCount, stoppedAt);
+
+                // Krátký oddech i tady — po sérii neúspěchů nemá smysl hned pálit další
+                // požadavek na stejný server (anti-ban).
+                var cooldown = TimeSpan.FromSeconds(_random.Next(120, 301));
+                status.NextActionUtc = DateTime.UtcNow.Add(cooldown);
+                status.LastMessage =
+                    $"Problém: „{DisplayTitle(item)}“ se nepovedlo po {failCount} pokusech ({stoppedAt} %) — {ex.Message}";
+                await _state.Queue.WaitOrWakeAsync(cooldown, ct).ConfigureAwait(false);
+                return;
+            }
+
             // Backoff s jitterem (anti-ban): 1. chyba ~2–3 min, 2. chyba ~8–12 min.
             // Status vyčistit PŘED čekáním, ať GUI neukazuje „Stahuji" u nečinného workeru.
             var baseMinutes = failCount >= 2 ? 8 : 2;
             var backoff = TimeSpan.FromSeconds(_random.Next(baseMinutes * 60, (int)(baseMinutes * 60 * 1.5)));
-            status.CurrentItemId = null;
-            status.CurrentItemTitle = null;
-            status.CurrentSpeedBps = 0;
             status.NextActionUtc = DateTime.UtcNow.Add(backoff);
-            status.LastMessage = $"Chyba: {ex.Message} — další pokus ~{backoff.TotalMinutes:F0} min";
+            status.LastMessage =
+                $"Přerušeno na {stoppedAt} % ({ex.Message}) — pokus {failCount + 1} z {maxRetries + 1} za ~{backoff.TotalMinutes:F0} min";
             await _state.Queue.WaitOrWakeAsync(backoff, ct).ConfigureAwait(false);
         }
         finally
@@ -428,11 +484,29 @@ public sealed class DownloadWorkerService : BackgroundService
         }
     }
 
-    private static bool InWindow(int hour, int from, int to)
+    /// <summary>
+    /// Kolik minut se dnes ubere z konce okna (losuje se jednou denně).
+    /// Díky tomu nekončí stahování každý den přesně na hodinu.
+    /// </summary>
+    private int WindowEndJitter(Configuration.PluginConfiguration cfg)
     {
-        // Okno může přecházet přes půlnoc (např. 22–6)
-        return from < to ? hour >= from && hour < to : hour >= from || hour < to;
+        if (cfg.WindowEndJitterMinutes <= 0)
+        {
+            return 0;
+        }
+
+        var today = DateTime.Now.ToString("yyyy-MM-dd");
+        if (_windowEndJitterDay != today)
+        {
+            _windowEndJitterDay = today;
+            _windowEndJitterMinutes = _random.Next(0, cfg.WindowEndJitterMinutes + 1);
+        }
+
+        return _windowEndJitterMinutes;
     }
+
+    private static int Percent(long done, long total) =>
+        total > 0 ? (int)Math.Clamp(done * 100 / total, 0L, 100L) : 0;
 
     private static string DisplayTitle(QueueItem item) =>
         item.MediaType == ScMediaType.Episode
