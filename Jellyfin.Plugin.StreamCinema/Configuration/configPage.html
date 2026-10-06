@@ -77,14 +77,21 @@
 
                 <div id="scSelBar" class="hide" style="background:#1b3a4b; padding:.6em .9em; border-radius:4px; margin-bottom:.75em; display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">
                     <span>Vybráno: <strong id="scSelCount">0</strong> — přetažením se přesunou všechny naráz</span>
+                    <button is="emby-button" type="button" id="scSelTop" class="raised" style="padding:.2em .7em;" title="Přesune vybrané položky na začátek fronty (v pořadí, v jakém teď stojí)"><span>⏫ Na začátek fronty</span></button>
                     <button is="emby-button" type="button" id="scSelClear" class="raised" style="padding:.2em .7em;"><span>Zrušit výběr</span></button>
                     <button is="emby-button" type="button" id="scSelRemove" class="raised" style="padding:.2em .7em;" title="Odebere všechny vybrané položky z fronty"><span>🗑 Odebrat vybrané</span></button>
                 </div>
 
-                <h2 style="margin:.2em 0 .5em;">⬇️ Fronta <span id="scQueueCount" style="opacity:.6; font-size:.8em;"></span></h2>
+                <h2 style="margin:.2em 0 .5em; display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">
+                    <span>⬇️ Fronta <span id="scQueueCount" style="opacity:.6; font-size:.8em;"></span></span>
+                    <button is="emby-button" type="button" id="scGroupSeries" class="raised hide" style="padding:.2em .7em; font-size:.7em;" title="Dá díly každého seriálu k sobě a seřadí je S01E01 → … Seriál zůstane tam, kde stál jeho první díl; filmy se nehýbou."><span>🔀 Seřadit seriály</span></button>
+                </h2>
+                <div id="scEtaSummary" style="margin-bottom:.5em; font-size:.9em;"></div>
                 <div class="fieldDescription" style="margin-bottom:.5em;">
                     Zaškrtni víc položek a chyť kteroukoli z nich — přesunou se všechny společně.
+                    <strong>Shift + klik</strong> vybere všechno mezi dvěma položkami, <strong>Ctrl + klik</strong> na řádek přidá/ubere jednu.
                 </div>
+                <div id="scSeriesBar" class="hide" style="background:#202020; padding:.6em .9em; border-radius:4px; margin-bottom:.75em;"></div>
                 <div id="scQueueList"></div>
 
                 <div id="scProblemSection" class="hide">
@@ -124,6 +131,9 @@
                     <strong>kvalita / GB</strong> — výjimka jen pro tuhle položku (prázdné = globální nastavení).
                     Vyšší kvalita potřebuje i vyšší limit GB, jinak ji limit vyřadí.<br>
                     <strong>interval</strong> — jak často kontrolovat (dny). Když zbývají epizody, kontroluje se denně.<br>
+                    <strong>#1, #2 …</strong> pořadí = priorita: díly výš postaveného seriálu se ve frontě řadí před díly níž postavených.
+                    <strong>▲▼</strong> posune o jedno místo, <strong>⏫</strong> dá úplně nahoru (fronta se hned přerovná,
+                    ručně přidané položky zůstanou na svém místě).<br>
                     <strong>⚡</strong> zkontroluje hned a zařadí do fronty vše, co projde (obejde interval i denní limit epizod) ·
                     <strong>⏸/▶</strong> pauza hlídání · <strong>🗑</strong> odebrat ze seznamu
                 </div>
@@ -355,6 +365,16 @@
                             Identita zařízení vůči katalogu. Můžeš sem vložit UUID svého Kodi
                             (Kodi: userdata/addon_data/plugin.video.stream-cinema/settings.xml → <code>system.uuid</code>),
                             aby plugin vystupoval jako tvé schválené Kodi zařízení. Neměň zbytečně — nová hodnota = nové zařízení.
+                        </div>
+                        <div style="margin-top:.5em; display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">
+                            <button is="emby-button" type="button" id="scNewUuidBtn" class="raised" style="padding:.3em .9em;" title="Vygeneruje a rovnou uloží nové UUID ve tvaru, jaký používá Kodi addon"><span>🎲 Vygenerovat nové</span></button>
+                            <span id="scNewUuidResult" style="font-size:.9em;"></span>
+                        </div>
+                        <div class="fieldDescription">
+                            Hodí se, když tě katalog přestane pouštět (401/403) a vypadá to na blokaci
+                            zařízení. Pozor: X-AUTH-TOKEN bývá schválený pro konkrétní zařízení, takže
+                            po změně může být potřeba ho schválit znovu — <strong>starou hodnotu si nech</strong>,
+                            vypíše se sem, aby šla vrátit.
                         </div>
                     </div>
 
@@ -886,6 +906,32 @@
             return i.bytesTotal > 0 ? Math.round(100 * i.bytesDone / i.bytesTotal) : 0;
         }
 
+        // Odhad času: „dnes 14:35", „zítra 2:10", „st 8. 10. 2:10", dál jen datum.
+        var dayAbbr = ['ne', 'po', 'út', 'st', 'čt', 'pá', 'so'];
+
+        function fmtEta(iso) {
+            if (!iso) return '';
+            var d = new Date(iso), now = new Date();
+            var hm = d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+            var days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate())
+                - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+            if (days <= 0) return 'dnes ' + hm;
+            if (days === 1) return 'zítra ' + hm;
+            var date = d.getDate() + '. ' + (d.getMonth() + 1) + '.'
+                + (d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : '');
+            return (days < 7 ? dayAbbr[d.getDay()] + ' ' : '') + date + ' ' + hm;
+        }
+
+        function etaTitle(i) {
+            return (i.etaStartUtc ? 'Začne ≈ ' + fmtEta(i.etaStartUtc) + ', ' : '')
+                + 'staženo ≈ ' + fmtEta(i.etaUtc) + ' (odhad podle pořadí, okna, pauz a rychlosti)';
+        }
+
+        // Český tvar slova „díl" podle počtu (1 / 2–4 / 5+).
+        function dilWord(n) { return n === 1 ? 'díl' : (n >= 2 && n <= 4 ? 'díly' : 'dílů'); }
+
+        function seriesKey(i) { return String(i.seriesTitle || i.title || '').toLowerCase(); }
+
         function selCount() { return Object.keys(selected).length; }
 
         function syncSelBar() {
@@ -918,6 +964,10 @@
                 if (i.failCount) { line += ' (pokusů: ' + i.failCount + ')'; }
             } else if (stKey === 'Queued' && i.stoppedPercent > 0 && i.bytesDone > 0) {
                 line += ' — naváže od ' + i.stoppedPercent + ' %';
+            }
+            if (i.etaUtc && (stKey === 'Queued' || stKey === 'Downloading')) {
+                line += ' · <span title="' + esc(etaTitle(i)) + '" style="color:#cfd8dc;">staženo ≈ '
+                    + esc(fmtEta(i.etaUtc)) + '</span>';
             }
             if (i.errorMessage) { line += ' — ' + esc(i.errorMessage); }
 
@@ -983,13 +1033,144 @@
                 });
             });
             root.querySelectorAll('.sc-sel').forEach(function (c) {
-                c.addEventListener('change', function () {
+                c.addEventListener('click', function (ev) {
                     var id = c.getAttribute('data-id');
-                    if (c.checked) { selected[id] = true; } else { delete selected[id]; }
-                    c.closest('[data-drag]').style.outline = c.checked ? '2px solid #00a4dc' : '';
-                    syncSelBar();
+                    // Shift + klik: všechno mezi minulým a tímhle zaškrtnutím dostane stejný stav.
+                    if (ev.shiftKey && selAnchor && selAnchor !== id) {
+                        selectRange(selAnchor, id, c.checked);
+                    } else {
+                        paintSel(id, c.checked);
+                    }
+                    selAnchor = id;
+                    afterSelChange();
                 });
             });
+        }
+
+        // ── Výběr: Shift + klik = rozsah, Ctrl + klik = jedna položka ──
+        var selAnchor = null;      // poslední kliknutá položka (odkud se počítá rozsah)
+        var lastQueue = [];        // poslední načtená fronta (pro panel seriálů)
+
+        function paintSel(id, on) {
+            if (on) { selected[id] = true; } else { delete selected[id]; }
+            var row = el('scQueueList').querySelector('[data-drag="1"][data-id="' + id + '"]');
+            if (!row) return;
+            row.style.outline = on ? '2px solid #00a4dc' : '';
+            var box = row.querySelector('.sc-sel');
+            if (box) { box.checked = on; }
+        }
+
+        function selectRange(fromId, toId, on) {
+            var rows = dragRows(el('scQueueList'));
+            var a = -1, b = -1;
+            rows.forEach(function (r, idx) {
+                if (rowId(r) === fromId) a = idx;
+                if (rowId(r) === toId) b = idx;
+            });
+            if (a < 0 || b < 0) { paintSel(toId, on); return; }
+            for (var n = Math.min(a, b); n <= Math.max(a, b); n++) { paintSel(rowId(rows[n]), on); }
+        }
+
+        function afterSelChange() {
+            syncSelBar();
+            renderSeriesBar(lastQueue);
+        }
+
+        // ── Panel „Seriály ve frontě" ────────────────────────────
+        // U každého seriálu: kolik dílů čeká, kdy bude poslední stažený, a tlačítka
+        // „označit nestažené díly" (pak jde skupinu přetáhnout / dát na začátek / odebrat)
+        // a „upřednostnit seriál" (všechny jeho díly na začátek fronty).
+
+        function renderSeriesBar(queue) {
+            var bar = el('scSeriesBar');
+            var series = {}, order = [];
+            queue.forEach(function (i) {
+                if (!isEpisode(i) || normStatus(i.status) !== 'Queued') return;
+                var key = seriesKey(i);
+                if (!series[key]) {
+                    series[key] = { title: i.seriesTitle || i.title, count: 0, selectable: [], last: null };
+                    order.push(key);
+                }
+                var s = series[key];
+                s.count++;
+                if (!i.forceNow) { s.selectable.push(i.id); }
+                if (i.etaUtc && (!s.last || new Date(i.etaUtc) > new Date(s.last))) { s.last = i.etaUtc; }
+            });
+
+            el('scGroupSeries').classList.toggle('hide', order.length === 0);
+            if (!order.length) {
+                bar.classList.add('hide');
+                bar.innerHTML = '';
+                return;
+            }
+
+            bar.classList.remove('hide');
+            bar.innerHTML = '<div style="margin-bottom:.4em; opacity:.8;">📺 Seriály ve frontě</div>'
+                + '<div style="display:flex; flex-direction:column; gap:.35em;">'
+                + order.map(function (key) {
+                    var s = series[key];
+                    var allSel = s.selectable.length > 0 && s.selectable.every(function (id) { return selected[id]; });
+                    var k = esc(key);
+                    return '<div style="display:flex; align-items:center; justify-content:space-between; gap:.6em; flex-wrap:wrap;">'
+                        + '<span>' + esc(s.title) + ' <span style="opacity:.6;">· ' + s.count + ' ' + dilWord(s.count)
+                        + (s.last ? ' · poslední ≈ ' + esc(fmtEta(s.last)) : '') + '</span></span>'
+                        + '<span style="display:flex; gap:.4em; flex-wrap:wrap;">'
+                        + '<button is="emby-button" type="button" class="raised sc-ser-sel" data-key="' + k + '" style="padding:.2em .7em;"'
+                        + (s.selectable.length ? '' : ' disabled')
+                        + ' title="Označí všechny nestažené díly seriálu ve frontě — pak je můžeš přetáhnout, dát na začátek nebo odebrat naráz"><span>'
+                        + (allSel ? '☐ Zrušit označení' : '☑ Označit nestažené díly') + '</span></button>'
+                        + '<button is="emby-button" type="button" class="raised sc-ser-top" data-key="' + k + '" style="padding:.2em .7em;"'
+                        + ' title="Všechny díly seriálu na začátek fronty (seřazené od nejnižšího). Když seriál hlídáš, posune se nahoru i v Hlídaných, ať ho nové díly nepředběhnou."><span>⏫ Upřednostnit seriál</span></button>'
+                        + '</span></div>';
+                }).join('') + '</div>';
+
+            bar.querySelectorAll('.sc-ser-sel').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    var s = series[b.getAttribute('data-key')];
+                    var on = !s.selectable.every(function (id) { return selected[id]; });
+                    s.selectable.forEach(function (id) { paintSel(id, on); });
+                    afterSelChange();
+                });
+            });
+            bar.querySelectorAll('.sc-ser-top').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    b.disabled = true;
+                    api('POST', 'Queue/PrioritizeSeries', { SeriesTitle: series[b.getAttribute('data-key')].title })
+                        .then(refreshQueue, refreshQueue);
+                });
+            });
+        }
+
+        // Souhrn odhadu nad frontou: kdy bude hotovo všechno a z čeho se počítá.
+        function renderEtaSummary(eta, count) {
+            var box = el('scEtaSummary');
+            if (!eta || !count) { box.innerHTML = ''; return; }
+
+            var lines = [];
+            if (eta.paused) {
+                lines.push('<span style="color:#ffb74d;">⏸ Stahování je pozastavené — odhad platí od chvíle, kdy ho obnovíš.</span>');
+            }
+            if (eta.noWindow) {
+                lines.push('⚠️ Rozvrh nemá v příštím týdnu žádné okno — u zbytku fronty nejde odhadnout, kdy se stáhne.');
+            } else if (eta.truncated) {
+                lines.push('⏳ Fronta vystačí na víc než 90 dní stahování — dál se už neodhaduje.');
+            } else if (eta.allDoneUtc) {
+                lines.push('🏁 Všechno staženo ≈ <strong>' + esc(fmtEta(eta.allDoneUtc)) + '</strong>');
+            }
+
+            var source = {
+                measured: 'průměr posledních stahování',
+                current: 'aktuální rychlost',
+                limit: 'limit rychlosti z nastavení',
+                'default': 'zatím nic nestaženo, beru 50 Mbit/s'
+            }[eta.speedSource] || '';
+            var how = '~' + fmtBytes(eta.speedBps) + '/s (' + source + ')'
+                + (eta.paranoia ? ', paranoia pauzy podle délky' : ', pauzy ' + eta.pauseMinMinutes + '–' + eta.pauseMaxMinutes + ' min')
+                + (eta.windowed ? ', časové okno' : '')
+                + (eta.dailyCapGb > 0 ? ', denní limit ' + eta.dailyCapGb + ' GB' : '');
+            lines.push('<span style="opacity:.6;">Odhad počítá s ' + esc(how)
+                + '. Po přesunutí ve frontě se přepočítá. Výpadky a přeskočené duplicity dopředu nezná.</span>');
+            box.innerHTML = lines.join('<br>');
         }
 
         function refreshQueue() {
@@ -1056,6 +1237,9 @@
                 renderSection(el('scQueueList'), queue, 'Fronta je prázdná. Přidej něco přes záložku Hledání.');
                 bindQueueDrag(el('scQueueList'));
                 el('scQueueCount').textContent = queue.length ? '(' + queue.length + ')' : '';
+                lastQueue = queue;
+                renderSeriesBar(queue);
+                renderEtaSummary(data.eta, queue.length);
 
                 el('scProblemSection').classList.toggle('hide', problems.length === 0);
                 if (problems.length) {
@@ -1096,6 +1280,21 @@
         function bindQueueDrag(root) {
             dragRows(root).forEach(function (row) {
                 row.addEventListener('pointerdown', function (ev) { startDrag(ev, row); });
+                // Shift by jinak při kliknutí označil text na stránce.
+                row.addEventListener('mousedown', function (ev) { if (ev.shiftKey) ev.preventDefault(); });
+                row.addEventListener('click', function (ev) {
+                    if (ev.target.closest('button') || ev.target.closest('input')) return;
+                    var id = rowId(row);
+                    if (ev.shiftKey && selAnchor && selAnchor !== id) {
+                        selectRange(selAnchor, id, true);
+                    } else if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+                        paintSel(id, !selected[id]);
+                    } else {
+                        return;   // obyčejný klik = začátek tahu, výběr se nemění
+                    }
+                    selAnchor = id;
+                    afterSelChange();
+                });
             });
         }
 
@@ -1115,6 +1314,7 @@
 
         function startDrag(ev, row) {
             if (dragCtx || ev.button > 0) return;
+            if (ev.shiftKey || ev.ctrlKey || ev.metaKey) return;   // klik s modifikátorem = výběr
             if (ev.target.closest('button') || ev.target.closest('input')) return;
             if (ev.pointerType !== 'mouse' && !ev.target.closest('.sc-grip')) return;
 
@@ -1318,7 +1518,8 @@
             return ['⏳ hlídám', '#ffb74d'];
         }
 
-        function watchRow(i) {
+        // idx/list: pozice v sekci — u rozpracovaných je to zároveň priorita (#1 = nejdřív).
+        function watchRow(i, idx, list) {
             var typ = i.type === 'series' ? '📺 seriál' : '🎬 film';
             var st = watchState(i);
             var qualitySel = '<select is="emby-select" class="sc-w-q" data-id="' + i.id
@@ -1344,7 +1545,13 @@
                     + btn('sc-w-now', i.id, '⚡', 'Zkontrolovat teď a zařadit do fronty')
                     + btn('sc-w-del', i.id, '🗑', 'Odebrat ze seznamu');
             } else {
-                controls = qualitySel
+                // Pořadí = priorita stahování. Krajní položky nemají kam posouvat.
+                var order = (idx > 0
+                        ? btn('sc-w-top', i.id, '⏫', 'Upřednostnit — úplně nahoru; jeho díly ve frontě předběhnou ostatní hlídané')
+                            + btn('sc-w-up', i.id, '▲', 'O místo výš (dřív)')
+                        : '')
+                    + (idx < list.length - 1 ? btn('sc-w-down', i.id, '▼', 'O místo níž (později)') : '');
+                controls = order + qualitySel
                     + '<input is="emby-input" type="number" min="0" placeholder="GB" value="' + (i.maxFileSizeGb != null ? i.maxFileSizeGb : '')
                     + '" class="sc-w-gb" data-id="' + i.id
                     + '" title="Max velikost jen pro tuhle položku (prázdné = globální, 0 = bez limitu)" style="width:70px;" />'
@@ -1362,8 +1569,10 @@
             }
             if (i.lastCheckedUtc) { detail.push('kontrola: ' + new Date(i.lastCheckedUtc).toLocaleDateString()); }
 
+            var rank = i.completed ? '' : '<span title="Pořadí = priorita stahování" style="opacity:.55; margin-right:.3em;">#' + (idx + 1) + '</span>';
+
             return '<div data-id="' + i.id + '" style="background:#252525; padding:.6em .9em; border-radius:4px; display:flex; justify-content:space-between; align-items:center; gap:1em; flex-wrap:wrap;">'
-                + '<span style="min-width:0;">' + esc(i.title) + (i.year ? ' <span style="opacity:.6;">(' + i.year + ')</span>' : '')
+                + '<span style="min-width:0;">' + rank + esc(i.title) + (i.year ? ' <span style="opacity:.6;">(' + i.year + ')</span>' : '')
                 + ' <span style="opacity:.6;">· ' + typ + '</span><br>'
                 + '<span style="color:' + st[1] + '; font-size:.9em;">' + st[0] + '</span>'
                 + '<span style="opacity:.7; font-size:.9em;"> — ' + esc(i.lastResult || 'ještě nekontrolováno')
@@ -1432,6 +1641,15 @@
                         // hlídač běží na pozadí — výsledek se objeví v popisu položky
                         setTimeout(renderWatch, 1500);
                     }, function () { b.disabled = false; });
+                });
+            });
+            // Pořadí v Hlídaných: server hned přerovná i frontu.
+            [['.sc-w-top', 'top'], ['.sc-w-up', 'up'], ['.sc-w-down', 'down']].forEach(function (m) {
+                box.querySelectorAll(m[0]).forEach(function (b) {
+                    b.addEventListener('click', function () {
+                        b.disabled = true;
+                        api('POST', 'Watch/' + b.getAttribute('data-id') + '/Move/' + m[1]).then(renderWatch, renderWatch);
+                    });
                 });
             });
             box.querySelectorAll('.sc-w-del').forEach(function (b) {
@@ -1625,6 +1843,27 @@
             refreshQueue();
         });
 
+        // Vybrané na začátek fronty (v pořadí, v jakém teď stojí), ostatní za ně.
+        el('scSelTop').addEventListener('click', function () {
+            var ids = dragRows(el('scQueueList')).map(rowId);
+            var picked = ids.filter(function (id) { return selected[id]; });
+            if (!picked.length || queueBusy()) return;
+            var rest = ids.filter(function (id) { return !selected[id]; });
+            reorderPending = true;
+            api('POST', 'Queue/Reorder', { Ids: picked.concat(rest) }).then(function () {
+                reorderPending = false;
+                refreshQueue();
+            }, function () {
+                reorderPending = false;
+                Dashboard.alert('Změnu pořadí se nepodařilo uložit.');
+                refreshQueue();
+            });
+        });
+
+        el('scGroupSeries').addEventListener('click', function () {
+            api('POST', 'Queue/GroupSeries').then(refreshQueue, refreshQueue);
+        });
+
         el('scSelRemove').addEventListener('click', function () {
             var ids = Object.keys(selected);
             if (!ids.length) return;
@@ -1638,6 +1877,22 @@
             hideDone = !hideDone;
             saveFlag('sc-hide-done', hideDone);
             refreshQueue();
+        });
+
+        el('scNewUuidBtn').addEventListener('click', function () {
+            var previous = el('cfgDeviceUuid').value;
+            var result = el('scNewUuidResult');
+            result.textContent = '… generuji';
+            api('POST', 'NewDeviceUuid').then(function (r) {
+                el('cfgDeviceUuid').value = r.uuid;
+                // Uložit rovnou — jinak by se dalo snadno kliknout a zapomenout na Uložit.
+                return persistConfig().then(function () {
+                    result.innerHTML = '<span style="color:#4caf50;">✅ Uloženo.</span> Předchozí: <code>'
+                        + esc(previous || '(prázdné)') + '</code>';
+                });
+            }, function () {
+                result.innerHTML = '<span style="color:#e57373;">❌ Nepovedlo se vygenerovat.</span>';
+            });
         });
 
         el('scProblemRetryAll').addEventListener('click', function () {

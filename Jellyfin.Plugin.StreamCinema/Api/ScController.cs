@@ -62,6 +62,16 @@ public class ScController : ControllerBase
     }
 
     /// <summary>
+    /// Vygeneruje nové UUID zařízení (X-Uuid) ve tvaru, jaký používá Kodi addon.
+    /// Neukládá ho — to udělá GUI uložením konfigurace.
+    /// </summary>
+    [HttpPost("NewDeviceUuid")]
+    public ActionResult NewDeviceUuid()
+    {
+        return Ok(new { uuid = DeviceId.Generate() });
+    }
+
+    /// <summary>
     /// Pokus o auto-bootstrap X-AUTH-TOKENu ze sc.json na kra.sk úložišti.
     /// Nikdy negeneruje nový token.
     /// </summary>
@@ -352,6 +362,9 @@ public class ScController : ControllerBase
         // Čekající/stahované v pořadí stahování (ForceNow → ruční pořadí → čas),
         // dokončené a chybné pod nimi (nejnovější nahoře).
         var all = _state.Queue.GetAll();
+        var cfg = Plugin.Instance?.Configuration ?? new Configuration.PluginConfiguration();
+        var (eta, speedBps, speedSource) = EstimateEta(all, cfg);
+
         var active = all
             .Where(i => i.Status is QueueItemStatus.Queued or QueueItemStatus.Downloading)
             .OrderByDescending(i => i.Status == QueueItemStatus.Downloading)
@@ -386,10 +399,142 @@ public class ScController : ControllerBase
                 targetPath = i.TargetPath,
                 completedUtc = i.CompletedUtc,
                 addedUtc = i.AddedUtc,
+                etaStartUtc = Lookup(eta.StartUtc, i.Id),
+                etaUtc = Lookup(eta.FinishUtc, i.Id),
             })
             .ToList();
 
-        return Ok(new { items });
+        return Ok(new
+        {
+            items,
+            eta = new
+            {
+                allDoneUtc = eta.AllDoneUtc,
+                speedBps,
+                speedSource,
+                noWindow = eta.NoWindow,
+                truncated = eta.Truncated,
+                paused = _state.Queue.WorkerPaused,
+                pauseMinMinutes = cfg.PauseMinMinutes,
+                pauseMaxMinutes = cfg.PauseMaxMinutes,
+                paranoia = cfg.ParanoiaMode,
+                windowed = cfg.UseWeeklyWindow || cfg.WindowFromHour != cfg.WindowToHour,
+                dailyCapGb = cfg.DailyCapGb,
+            },
+        });
+    }
+
+    private static DateTime? Lookup(Dictionary<Guid, DateTime> map, Guid id) =>
+        map.TryGetValue(id, out var value) ? value : null;
+
+    /// <summary>
+    /// Odhad, kdy se co stáhne (viz Core/QueueEta). Rychlost: průměr posledních
+    /// stahování → aktuální rychlost → limit rychlosti → 50 Mbit/s.
+    /// </summary>
+    private (EtaResult Result, long SpeedBps, string SpeedSource) EstimateEta(
+        List<QueueItem> all, Configuration.PluginConfiguration cfg)
+    {
+        var status = _state.Status;
+        var limitBps = cfg.SpeedLimitMbps > 0 ? (long)cfg.SpeedLimitMbps * 1024 * 1024 / 8 : 0;
+        var avg = _state.Queue.AvgSpeedBps;
+
+        long speed;
+        string source;
+        if (avg > 0)
+        {
+            speed = limitBps > 0 ? Math.Min(avg, limitBps) : avg;
+            source = "measured";
+        }
+        else if (status.CurrentSpeedBps > 0)
+        {
+            speed = status.CurrentSpeedBps;
+            source = "current";
+        }
+        else if (limitBps > 0)
+        {
+            speed = limitBps;
+            source = "limit";
+        }
+        else
+        {
+            speed = 50L * 1024 * 1024 / 8;
+            source = "default";
+        }
+
+        var current = status.CurrentItemId is Guid currentId
+            ? all.FirstOrDefault(i => i.Id == currentId && i.Status == QueueItemStatus.Downloading)
+            : null;
+        var queued = all.Where(i => i.Status == QueueItemStatus.Queued).ToList();
+
+        // Worker zrovna čeká (pauza mezi soubory, další pokus, výpadek) — od kdy zase pojede.
+        DateTime? resumeAt = null;
+        var outage = _state.OutageRemaining();
+        if (outage > TimeSpan.Zero)
+        {
+            resumeAt = DateTime.Now.Add(outage);
+        }
+
+        if (current == null && status.NextActionUtc is DateTime nextUtc && nextUtc > DateTime.UtcNow)
+        {
+            var next = nextUtc.ToLocalTime();
+            resumeAt = resumeAt == null || next > resumeAt ? next : resumeAt;
+        }
+
+        var settings = new EtaSettings
+        {
+            UseWeeklyWindow = cfg.UseWeeklyWindow,
+            WeeklyWindow = cfg.WeeklyWindow,
+            WindowFromHour = cfg.WindowFromHour,
+            WindowToHour = cfg.WindowToHour,
+            StartJitterMinutes = cfg.WindowJitterMinutes,
+            EndJitterMinutes = cfg.WindowEndJitterMinutes,
+            PauseMinMinutes = cfg.PauseMinMinutes,
+            PauseMaxMinutes = cfg.PauseMaxMinutes,
+            DailyCapBytes = cfg.DailyCapGb > 0 ? (long)cfg.DailyCapGb * 1024 * 1024 * 1024 : 0,
+            Paranoia = cfg.ParanoiaMode,
+            SpeedBps = speed,
+        };
+
+        var result = QueueEta.Estimate(
+            queued,
+            current,
+            status.CurrentBytesDone,
+            status.CurrentBytesTotal,
+            status.CurrentSpeedBps,
+            settings,
+            DateTime.Now,
+            resumeAt,
+            _state.Queue.GetDailyBytes());
+        return (result, speed, source);
+    }
+
+    /// <summary>
+    /// „Seřadit seriály" — díly každého seriálu dá ve frontě k sobě (S01E01 → …).
+    /// Seriál zůstane na místě svého prvního dílu, filmy se nehýbou.
+    /// </summary>
+    [HttpPost("Queue/GroupSeries")]
+    public ActionResult GroupSeries()
+    {
+        return Ok(new { success = _state.Queue.GroupSeries() });
+    }
+
+    /// <summary>
+    /// „Upřednostnit seriál" — všechny čekající díly na začátek fronty. Když je seriál
+    /// v Hlídaných, přesune se tam taky nahoru, ať ho nové díly z hlídače nepředběhnou.
+    /// </summary>
+    [HttpPost("Queue/PrioritizeSeries")]
+    public ActionResult PrioritizeSeries([FromBody] PrioritizeSeriesRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.SeriesTitle))
+        {
+            return BadRequest(new { error = "Chybí název seriálu" });
+        }
+
+        var moved = _state.Queue.PrioritizeSeries(request.SeriesTitle);
+        var key = "ep|" + QueueOrder.SeriesKey(request.SeriesTitle);
+        var watched = _state.Watch.GetAll().FirstOrDefault(w => QueueOrder.GroupKey(w) == key);
+        var watchTop = watched != null && _state.Watch.Move(watched.Id, "top");
+        return Ok(new { success = moved > 0, moved, watchTop });
     }
 
     /// <summary>
@@ -543,6 +688,7 @@ public class ScController : ControllerBase
     [HttpGet("Watch")]
     public ActionResult GetWatch()
     {
+        // Pořadí seznamu = priorita stahování (první = nejdřív).
         var items = _state.Watch.GetAll().Select(w => new
         {
             id = w.Id,
@@ -653,6 +799,23 @@ public class ScController : ControllerBase
         return Ok(new { success = found });
     }
 
+    /// <summary>
+    /// Pořadí v Hlídaných (▲ / ▼ / ⏫ úplně nahoru). Fronta se hned přerovná: díly
+    /// hlídaných titulů se seřadí podle nového pořadí, ručně přidané položky zůstanou.
+    /// </summary>
+    [HttpPost("Watch/{id}/Move/{direction}")]
+    public ActionResult MoveWatch([FromRoute] Guid id, [FromRoute] string direction)
+    {
+        if (!_state.Watch.Move(id, direction))
+        {
+            return Ok(new { success = false });
+        }
+
+        var keys = _state.Watch.GetAll().Select(QueueOrder.GroupKey).ToList();
+        var queueChanged = _state.Queue.ApplyGroupPriority(keys);
+        return Ok(new { success = true, queueChanged });
+    }
+
     /// <summary>Odebere sledovanou položku.</summary>
     [HttpDelete("Watch/{id}")]
     public ActionResult RemoveWatch([FromRoute] Guid id)
@@ -729,6 +892,12 @@ public class QueueAutoRequest
     public int? Season { get; set; }
 
     public int? Episode { get; set; }
+}
+
+public class PrioritizeSeriesRequest
+{
+    /// <summary>Název seriálu, jak ho má položka fronty (porovnává se normalizovaně).</summary>
+    public string? SeriesTitle { get; set; }
 }
 
 public class ReorderQueueRequest

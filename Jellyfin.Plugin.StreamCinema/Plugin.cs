@@ -23,7 +23,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         var dirty = false;
         if (string.IsNullOrEmpty(Configuration.DeviceUuid))
         {
-            Configuration.DeviceUuid = Guid.NewGuid().ToString();
+            Configuration.DeviceUuid = Core.DeviceId.Generate();
             dirty = true;
         }
 

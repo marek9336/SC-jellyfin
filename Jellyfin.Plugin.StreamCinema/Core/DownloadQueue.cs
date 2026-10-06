@@ -86,40 +86,186 @@ public sealed class DownloadQueue
     {
         lock (_lock)
         {
-            // Pořadí: „Stáhnout teď" → ruční pořadí (▲▼) → čas zařazení
-            var item = _state.Items
-                .Where(i => i.Status == QueueItemStatus.Queued)
-                .OrderByDescending(i => i.ForceNow)
-                .ThenBy(i => i.SortIndex)
-                .ThenBy(i => i.AddedUtc)
-                .FirstOrDefault();
+            // Pořadí: „Stáhnout teď" → ruční pořadí (▲▼) → čas zařazení; epizody
+            // sekvenčně E01 → E02 → … (viz QueueOrder.PickNext — sdílí ho i odhad času).
+            var item = QueueOrder.PickNext(
+                _state.Items.Where(i => i.Status == QueueItemStatus.Queued).ToList());
+            return item == null ? null : Clone(item);
+        }
+    }
 
-            if (item == null)
+    /// <summary>
+    /// Průměrná rychlost stahování (B/s) z posledních dokončených stahování.
+    /// 0 = zatím nic nestaženo. Slouží k odhadu, kdy se co stáhne.
+    /// </summary>
+    public long AvgSpeedBps
+    {
+        get { lock (_lock) { return _state.AvgSpeedBps; } }
+    }
+
+    /// <summary>
+    /// Započítá rychlost dokončeného stahování do klouzavého průměru. Nové stahování
+    /// má váhu 30 %, ať jeden pomalý večer odhad hned nerozhodí.
+    /// </summary>
+    public void RecordSpeed(long bytesPerSecond)
+    {
+        if (bytesPerSecond <= 0)
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            _state.AvgSpeedBps = _state.AvgSpeedBps <= 0
+                ? bytesPerSecond
+                : (long)((_state.AvgSpeedBps * 0.7) + (bytesPerSecond * 0.3));
+            SaveLocked();
+        }
+    }
+
+    /// <summary>
+    /// „Seřadit seriály": díly jednoho seriálu dá k sobě a seřadí je S01E01 → …
+    /// Seriál zůstane tam, kde ve frontě stál jeho první díl; filmy se nehýbou.
+    /// Položky s ⚡ předností se nepřesouvají (jdou na řadu první tak jako tak).
+    /// Vrací true, když se pořadí změnilo.
+    /// </summary>
+    public bool GroupSeries()
+    {
+        lock (_lock)
+        {
+            var queued = QueuedForReorderLocked();
+            var groups = new List<List<QueueItem>>();
+            var bySeries = new Dictionary<string, List<QueueItem>>(StringComparer.Ordinal);
+            foreach (var item in queued)
             {
-                return null;
+                var key = QueueOrder.SeriesKey(item);
+                if (key == null)
+                {
+                    groups.Add(new List<QueueItem> { item });
+                    continue;
+                }
+
+                if (!bySeries.TryGetValue(key, out var group))
+                {
+                    group = new List<QueueItem>();
+                    bySeries[key] = group;
+                    groups.Add(group);
+                }
+
+                group.Add(item);
             }
 
-            // Epizody SEKVENČNĚ: když je na řadě epizoda, vezmi z téhož seriálu
-            // nejnižší nestaženou (E01 → E02 → …), ať to vypadá jako reálné sledování.
-            if (item.MediaType == ScMediaType.Episode && !item.ForceNow)
+            var ordered = groups
+                .SelectMany(g => g.OrderBy(i => i.Season ?? 0).ThenBy(i => i.Episode ?? 0))
+                .ToList();
+            var changed = ApplyOrderLocked(queued, ordered);
+            if (changed)
             {
-                var series = item.SeriesTitle ?? item.Title;
-                var first = _state.Items
-                    .Where(i => i.Status == QueueItemStatus.Queued
-                        && i.MediaType == ScMediaType.Episode
-                        && !i.ForceNow
-                        && (i.SeriesTitle ?? i.Title) == series)
-                    .OrderBy(i => i.Season ?? 0)
-                    .ThenBy(i => i.Episode ?? 0)
-                    .FirstOrDefault();
-                if (first != null)
+                _log($"queue: seriály seřazeny ({bySeries.Count} seriálů)");
+            }
+
+            return changed;
+        }
+    }
+
+    /// <summary>
+    /// „Upřednostnit seriál": všechny čekající díly seriálu půjdou na začátek fronty
+    /// (hned za položky s ⚡ předností), seřazené S01E01 → … Vrací počet dílů.
+    /// </summary>
+    public int PrioritizeSeries(string seriesTitle)
+    {
+        var key = QueueOrder.SeriesKey(seriesTitle);
+        lock (_lock)
+        {
+            var queued = QueuedForReorderLocked();
+            var episodes = queued
+                .Where(i => QueueOrder.SeriesKey(i) == key)
+                .OrderBy(i => i.Season ?? 0)
+                .ThenBy(i => i.Episode ?? 0)
+                .ToList();
+            if (episodes.Count == 0)
+            {
+                return 0;
+            }
+
+            ApplyOrderLocked(queued, episodes.Concat(queued.Except(episodes)).ToList());
+            _log($"queue: seriál \"{seriesTitle}\" upřednostněn ({episodes.Count} dílů na začátek fronty)");
+            return episodes.Count;
+        }
+    }
+
+    /// <summary>
+    /// Pořadí podle Hlídaných: položky, které patří hlídaným titulům, se seřadí podle
+    /// pořadí v Hlídaných (výš = dřív), ale jen mezi sebou — zůstanou na místech,
+    /// která ve frontě zabíraly. Ručně přidané filmy a díly tak zůstanou, kde jsou.
+    /// `groupKeys` = klíče hlídaných v pořadí priority (viz QueueOrder.GroupKey).
+    /// </summary>
+    public bool ApplyGroupPriority(IReadOnlyList<string> groupKeys)
+    {
+        var rank = RankMap(groupKeys);
+        lock (_lock)
+        {
+            var queued = QueuedForReorderLocked();
+            var slots = new List<int>();
+            for (var i = 0; i < queued.Count; i++)
+            {
+                if (rank.ContainsKey(QueueOrder.GroupKey(queued[i])))
                 {
-                    item = first;
+                    slots.Add(i);
                 }
             }
 
-            return Clone(item);
+            // Stabilní řazení: v rámci jednoho titulu zůstane dosavadní pořadí,
+            // epizody stejně jdou sekvenčně (PickNext).
+            var sorted = slots
+                .Select(i => queued[i])
+                .OrderBy(i => rank[QueueOrder.GroupKey(i)])
+                .ToList();
+            var ordered = queued.ToList();
+            for (var n = 0; n < slots.Count; n++)
+            {
+                ordered[slots[n]] = sorted[n];
+            }
+
+            return ApplyOrderLocked(queued, ordered);
         }
+    }
+
+    /// <summary>Pořadí → slovník klíč → index (první výskyt vyhrává).</summary>
+    public static Dictionary<string, int> RankMap(IReadOnlyList<string> groupKeys)
+    {
+        var rank = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < groupKeys.Count; i++)
+        {
+            rank.TryAdd(groupKeys[i], i);
+        }
+
+        return rank;
+    }
+
+    /// <summary>Čekající položky bez ⚡ přednosti v aktuálním pořadí (ty jdou přetahovat).</summary>
+    private List<QueueItem> QueuedForReorderLocked() =>
+        _state.Items
+            .Where(i => i.Status == QueueItemStatus.Queued && !i.ForceNow)
+            .OrderBy(i => i.SortIndex)
+            .ThenBy(i => i.AddedUtc)
+            .ToList();
+
+    /// <summary>Přepíše SortIndex podle nového pořadí a uloží. Vrací true při změně.</summary>
+    private bool ApplyOrderLocked(List<QueueItem> before, List<QueueItem> after)
+    {
+        if (before.Select(i => i.Id).SequenceEqual(after.Select(i => i.Id)))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < after.Count; i++)
+        {
+            after[i].SortIndex = i;
+        }
+
+        SaveLocked();
+        return true;
     }
 
     /// <summary>
@@ -215,12 +361,8 @@ public sealed class DownloadQueue
     {
         lock (_lock)
         {
-            var queued = _state.Items
-                .Where(i => i.Status == QueueItemStatus.Queued)
-                .OrderByDescending(i => i.ForceNow)
-                .ThenBy(i => i.SortIndex)
-                .ThenBy(i => i.AddedUtc)
-                .ToList();
+            var queued = QueueOrder.ByPriority(
+                _state.Items.Where(i => i.Status == QueueItemStatus.Queued)).ToList();
 
             var idx = queued.FindIndex(i => i.Id == id);
             if (idx < 0)
@@ -256,11 +398,7 @@ public sealed class DownloadQueue
     {
         lock (_lock)
         {
-            var queued = _state.Items
-                .Where(i => i.Status == QueueItemStatus.Queued && !i.ForceNow)
-                .OrderBy(i => i.SortIndex)
-                .ThenBy(i => i.AddedUtc)
-                .ToList();
+            var queued = QueuedForReorderLocked();
 
             var byId = queued.ToDictionary(i => i.Id);
             var seen = new HashSet<Guid>();
@@ -320,8 +458,10 @@ public sealed class DownloadQueue
     /// (1) tentýž stream už ve frontě/historii je, (2) tentýž film/epizoda ve stejné
     /// kvalitě už čeká nebo se právě stahuje — pátý sken téhož dílu nikdo nechce.
     /// Jiná kvalita (3D vs. 1080p) duplicita NENÍ a projde.
+    /// <paramref name="groupRank"/> (z Hlídače): pořadí hlídaných titulů — položka se pak
+    /// zařadí před díly hlídaných s nižší prioritou, ne až na konec fronty.
     /// </summary>
-    public AddOutcome Add(QueueItem item)
+    public AddOutcome Add(QueueItem item, IReadOnlyDictionary<string, int>? groupRank = null)
     {
         lock (_lock)
         {
@@ -349,7 +489,24 @@ public sealed class DownloadQueue
             }
 
             // Nová položka jde na konec fronty (ruční pořadí ▲▼ ji pak může posunout)
-            item.SortIndex = _state.Items.Count > 0 ? _state.Items.Max(i => i.SortIndex) + 1 : 0;
+            var sortIndex = _state.Items.Count > 0 ? _state.Items.Max(i => i.SortIndex) + 1 : 0;
+
+            // Hlídaný titul s vyšší prioritou předběhne díly hlídaných s nižší prioritou.
+            if (groupRank != null && groupRank.TryGetValue(QueueOrder.GroupKey(item), out var myRank))
+            {
+                var lower = QueuedForReorderLocked().FirstOrDefault(q =>
+                    groupRank.TryGetValue(QueueOrder.GroupKey(q), out var r) && r > myRank);
+                if (lower != null)
+                {
+                    sortIndex = lower.SortIndex;
+                    foreach (var q in _state.Items.Where(q => q.SortIndex >= sortIndex))
+                    {
+                        q.SortIndex++;
+                    }
+                }
+            }
+
+            item.SortIndex = sortIndex;
             _state.Items.Add(item);
             SaveLocked();
             _log($"queue: přidáno \"{item.Title}\" ({item.Quality})");

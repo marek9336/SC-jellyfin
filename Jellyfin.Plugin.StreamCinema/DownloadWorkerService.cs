@@ -332,6 +332,14 @@ public sealed class DownloadWorkerService : BackgroundService
             File.Move(partPath, finalPath, overwrite: true);
             _state.Queue.AddDailyBytes(sessionBytes);
 
+            // Skutečná rychlost (vč. resolve) pro odhad času ve frontě. Malé kousky
+            // (navázání těsně před koncem) by průměr zkreslily, ty se nepočítají.
+            var seconds = (DateTime.UtcNow - dlStart).TotalSeconds;
+            if (sessionBytes >= 50L * 1024 * 1024 && seconds >= 10)
+            {
+                _state.Queue.RecordSpeed((long)(sessionBytes / seconds));
+            }
+
             // Titulky (volitelné — jejich selhání nesmí shodit stahování, jako v addonu)
             await TryDownloadSubtitles(item, finalPath, itemCt).ConfigureAwait(false);
 

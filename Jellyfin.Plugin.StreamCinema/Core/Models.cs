@@ -243,6 +243,9 @@ public class PluginState
     public long DailyBytes { get; set; }
 
     public bool WorkerPaused { get; set; }
+
+    /// <summary>Klouzavý průměr rychlosti stahování (B/s) — pro odhad, kdy se co stáhne.</summary>
+    public long AvgSpeedBps { get; set; }
 }
 
 /// <summary>Snapshot pro /status endpoint.</summary>

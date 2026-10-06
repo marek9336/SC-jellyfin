@@ -69,7 +69,12 @@ public sealed class WatcherService : BackgroundService
 
         var opts = BuildOptions(cfg);
 
-        foreach (var item in _state.Watch.GetAll())
+        // Pořadí v Hlídaných = priorita: výš postavený titul se kontroluje dřív a jeho
+        // díly se ve frontě zařadí před díly níž postavených (ne až na konec).
+        var watched = _state.Watch.GetAll();
+        var rank = DownloadQueue.RankMap(watched.Select(QueueOrder.GroupKey).ToList());
+
+        foreach (var item in watched)
         {
             // ⚡ Vynucená kontrola obchází pauzu, interval i denní limit epizod.
             var force = item.ForceCheck;
@@ -116,7 +121,7 @@ public sealed class WatcherService : BackgroundService
 
             try
             {
-                await Check(item, cfg, opts, force, ct).ConfigureAwait(false);
+                await Check(item, cfg, opts, rank, force, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -147,7 +152,12 @@ public sealed class WatcherService : BackgroundService
     }
 
     private async Task Check(
-        WatchItem item, PluginConfiguration cfg, StreamSelectorOptions globalOpts, bool force, CancellationToken ct)
+        WatchItem item,
+        PluginConfiguration cfg,
+        StreamSelectorOptions globalOpts,
+        IReadOnlyDictionary<string, int> rank,
+        bool force,
+        CancellationToken ct)
     {
         // Per-položkový override kvality/velikosti (např. tenhle film chci ve 4K,
         // i když globálně stahuju 1080p).
@@ -193,7 +203,7 @@ public sealed class WatcherService : BackgroundService
             var (best, reason) = StreamSelector.SelectBest(streams, opts);
             if (best != null)
             {
-                var outcome = Enqueue(item, best, isEp: false, 0, 0);
+                var outcome = Enqueue(item, best, isEp: false, 0, 0, rank);
                 _state.Watch.Update(item.Id, w =>
                 {
                     w.MovieGrabbed = true;
@@ -255,7 +265,7 @@ public sealed class WatcherService : BackgroundService
                 continue; // dabing/stream zatím není → zkusit příště
             }
 
-            Enqueue(item, best, isEp: true, e.Season, e.Episode);
+            Enqueue(item, best, isEp: true, e.Season, e.Episode, rank);
             grabbed.Add(e.Key);
             queued++;
         }
@@ -392,7 +402,8 @@ public sealed class WatcherService : BackgroundService
         return ScCatalog.ParseStreams(doc);
     }
 
-    private AddOutcome Enqueue(WatchItem item, StreamOption best, bool isEp, int season, int episode)
+    private AddOutcome Enqueue(
+        WatchItem item, StreamOption best, bool isEp, int season, int episode, IReadOnlyDictionary<string, int> rank)
     {
         var title = MediaOrganizer.CleanTitle(item.Title);
         var qi = new QueueItem
@@ -412,7 +423,7 @@ public sealed class WatcherService : BackgroundService
             SizeBytes = best.SizeBytes ?? 0,
             DurationSec = best.DurationSec,
         };
-        return _state.Queue.Add(qi);
+        return _state.Queue.Add(qi, rank);
     }
 
     private static StreamSelectorOptions BuildOptions(PluginConfiguration cfg) => new()
