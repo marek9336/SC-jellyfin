@@ -311,14 +311,24 @@
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="cfgWindowToHour" label="Stahovat do (hodina 0–23)" min="0" max="23" />
                     </div>
+                    <div id="scExtraWindowsBox" style="margin:-.4em 0 1.2em;">
+                        <div style="margin-bottom:.3em;">Další okna:</div>
+                        <div id="scExtraWindows" style="display:flex; flex-wrap:wrap; align-items:center;"></div>
+                        <button is="emby-button" type="button" id="scAddExtraWindow" class="raised" style="margin-top:.3em; padding:.3em .9em;" title="Přidá další časové okno — třeba večerní/noční"><span>➕ Přidat další okno</span></button>
+                        <div class="fieldDescription">
+                            Třeba přes den do 16:00 a pak znovu v noci 22 → 3, ať se využije i noční čas.
+                            Okno smí přejít půlnoc. Platí, když není zapnutý rozvrh po dnech
+                            (tam se další okna přidávají přímo u dne).
+                        </div>
+                    </div>
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="cfgWindowJitterMinutes" label="Rozptyl startu (min) — ať to nezačíná přesně na začátku okna" min="0" />
-                        <div class="fieldDescription">První denní stahování se odloží o náhodných 0–N minut (anti-ban). 0 = vypnuto.</div>
+                        <div class="fieldDescription">První stahování v každém okně (ráno i v noci) se odloží o náhodných 0–N minut (anti-ban). 0 = vypnuto.</div>
                     </div>
                     <div class="inputContainer">
                         <input is="emby-input" type="number" id="cfgWindowEndJitterMinutes" label="Rozptyl konce (min) — ať to nekončí přesně na hodinu" min="0" />
                         <div class="fieldDescription">
-                            Každý den se náhodně vylosuje 0–N minut a o tolik dřív se přestanou pouštět
+                            Pro každé okno se náhodně vylosuje 0–N minut a o tolik dřív se přestanou pouštět
                             nová stahování. Rozjeté stahování se nepřerušuje. 0 = vypnuto.
                         </div>
                     </div>
@@ -328,9 +338,10 @@
                         <span>📅 Rozvrh po dnech — každý den v týdnu vlastní okno</span>
                     </label>
                     <div class="fieldDescription" style="margin-bottom:.5em;">
-                        Když je zapnutý, platí místo okna výše. V pondělí můžeš stahovat celý den,
-                        o víkendu vůbec. „Celý den" = bez omezení hodinami, „nestahovat" = ten den nic.
-                        Okno smí přecházet přes půlnoc (22 → 6).
+                        Když je zapnutý, platí místo oken výše. V pondělí můžeš stahovat celý den,
+                        o víkendu vůbec, ve všední dny třeba do 16:00 a pak znovu 22 → 3 (➕ okno).
+                        „Celý den" = bez omezení hodinami, „nestahovat" = ten den nic.
+                        Okno smí přecházet přes půlnoc.
                     </div>
                     <div id="scWeekTable" class="hide" style="margin-bottom:1em;"></div>
 
@@ -1657,62 +1668,104 @@
             });
         }
 
-        // ── Rozvrh po dnech ──────────────────────────────────────
-        // Formát v konfiguraci: "1:0-0;2:22-6;6:off" — 1 = pondělí … 7 = neděle,
-        // "off" = ten den nestahovat, od == do = celý den. Okno smí přejít půlnoc.
+        // ── Časová okna a rozvrh po dnech ────────────────────────
+        // Rozvrh v konfiguraci: "1:8-16,22-3;2:0-0;6:off" — 1 = pondělí … 7 = neděle,
+        // okna dne oddělená čárkou, "off" = ten den nestahovat, od == do = celý den.
+        // Okno smí přejít půlnoc. Globální „další okna" mají stejný zápis bez dne: "22-3".
 
         var weekDays = ['', 'Pondělí', 'Úterý', 'Středa', 'Čtvrtek', 'Pátek', 'Sobota', 'Neděle'];
 
+        function clampHour(v) {
+            var n = parseInt(v, 10);
+            return isNaN(n) ? 0 : Math.max(0, Math.min(23, n));
+        }
+
+        function parseRanges(spec) {
+            var out = [];
+            String(spec || '').split(',').forEach(function (part) {
+                var h = part.trim().split('-');
+                if (h.length === 2 && h[0] !== '' && h[1] !== '') {
+                    out.push({ from: clampHour(h[0]), to: clampHour(h[1]) });
+                }
+            });
+            return out;
+        }
+
         function parseWeek(spec) {
             var out = {};
-            for (var d = 1; d <= 7; d++) { out[d] = { on: true, from: 0, to: 0 }; }
+            for (var d = 1; d <= 7; d++) { out[d] = { on: true, ranges: [] }; }
             String(spec || '').split(';').forEach(function (part) {
                 var kv = part.split(':');
                 if (kv.length !== 2) return;
                 var day = parseInt(kv[0], 10);
                 if (!(day >= 1 && day <= 7)) return;
                 var val = kv[1].trim();
-                if (val.toLowerCase() === 'off') { out[day] = { on: false, from: 0, to: 0 }; return; }
-                var h = val.split('-');
-                if (h.length === 2) {
-                    out[day] = { on: true, from: parseInt(h[0], 10) || 0, to: parseInt(h[1], 10) || 0 };
-                }
+                if (val.toLowerCase() === 'off') { out[day] = { on: false, ranges: [] }; return; }
+                var ranges = parseRanges(val);
+                if (ranges.length) { out[day] = { on: true, ranges: ranges }; }
             });
             return out;
+        }
+
+        // Jedno okno „od–do" s košem. Přidává/odebírá se přímo v DOM, ať se
+        // neztratí rozepsané hodnoty v ostatních řádcích.
+        function rangeHtml(from, to) {
+            return '<span class="sc-r" style="display:inline-flex; align-items:center; gap:.35em; margin:.15em .8em .15em 0;">'
+                + '<span style="opacity:.6;">od</span>'
+                + '<input is="emby-input" type="number" min="0" max="23" class="sc-r-from" value="' + from + '" style="width:64px;" />'
+                + '<span style="opacity:.6;">do</span>'
+                + '<input is="emby-input" type="number" min="0" max="23" class="sc-r-to" value="' + to + '" style="width:64px;" />'
+                + '<button is="emby-button" type="button" class="raised sc-r-del" title="Odebrat tohle okno" style="padding:.1em .5em;"><span>🗑</span></button>'
+                + '</span>';
+        }
+
+        function collectRanges(list) {
+            return Array.prototype.map.call(list.querySelectorAll('.sc-r'), function (r) {
+                return clampHour(r.querySelector('.sc-r-from').value) + '-' + clampHour(r.querySelector('.sc-r-to').value);
+            });
         }
 
         function renderWeek(spec) {
             var w = parseWeek(spec);
             var html = '<div style="display:flex; flex-direction:column; gap:.35em;">';
             for (var d = 1; d <= 7; d++) {
-                html += '<div style="background:#252525; padding:.4em .7em; border-radius:4px; display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">'
+                var ranges = w[d].ranges.length ? w[d].ranges : [{ from: 0, to: 0 }];
+                html += '<div class="sc-wd" data-day="' + d + '" style="background:#252525; padding:.4em .7em; border-radius:4px; display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">'
                     + '<span style="width:5.5em;">' + weekDays[d] + '</span>'
                     + '<label style="display:flex; align-items:center; gap:.35em; cursor:pointer;">'
-                    + '<input type="checkbox" class="sc-wd-on" data-day="' + d + '"' + (w[d].on ? ' checked' : '')
+                    + '<input type="checkbox" class="sc-wd-on"' + (w[d].on ? ' checked' : '')
                     + ' style="width:1.1em; height:1.1em; cursor:pointer;" /><span>stahovat</span></label>'
-                    + '<span style="opacity:.6;">od</span>'
-                    + '<input is="emby-input" type="number" min="0" max="23" class="sc-wd-from" data-day="' + d + '" value="' + w[d].from + '" style="width:64px;" />'
-                    + '<span style="opacity:.6;">do</span>'
-                    + '<input is="emby-input" type="number" min="0" max="23" class="sc-wd-to" data-day="' + d + '" value="' + w[d].to + '" style="width:64px;" />'
+                    + '<span class="sc-r-list" style="display:inline-flex; flex-wrap:wrap; align-items:center;">'
+                    + ranges.map(function (r) { return rangeHtml(r.from, r.to); }).join('')
+                    + '</span>'
+                    + '<button is="emby-button" type="button" class="raised sc-r-add" title="Přidat další okno v tomhle dni (třeba večer/noc)" style="padding:.1em .6em;"><span>➕ okno</span></button>'
                     + '</div>';
             }
             html += '</div><div class="fieldDescription" style="margin-top:.4em;">'
-                + 'Stejná hodnota od i do = celý den. Odškrtnuté „stahovat" = ten den se nestahuje vůbec.</div>';
+                + 'Stejná hodnota od i do = celý den. ➕ přidá další okno v témž dni — třeba do 16:00 a pak 22 → 3. '
+                + 'Odškrtnuté „stahovat" = ten den se nestahuje vůbec.</div>';
             el('scWeekTable').innerHTML = html;
         }
 
         function collectWeek() {
-            var box = el('scWeekTable');
             var parts = [];
-            for (var d = 1; d <= 7; d++) {
-                var on = box.querySelector('.sc-wd-on[data-day="' + d + '"]');
-                if (!on) continue;
-                if (!on.checked) { parts.push(d + ':off'); continue; }
-                var from = parseInt(box.querySelector('.sc-wd-from[data-day="' + d + '"]').value || '0', 10);
-                var to = parseInt(box.querySelector('.sc-wd-to[data-day="' + d + '"]').value || '0', 10);
-                parts.push(d + ':' + from + '-' + to);
-            }
+            el('scWeekTable').querySelectorAll('.sc-wd').forEach(function (row) {
+                var d = row.getAttribute('data-day');
+                if (!row.querySelector('.sc-wd-on').checked) { parts.push(d + ':off'); return; }
+                var ranges = collectRanges(row.querySelector('.sc-r-list'));
+                parts.push(d + ':' + (ranges.length ? ranges.join(',') : '0-0'));
+            });
             return parts.join(';');
+        }
+
+        function renderExtraWindows(spec) {
+            el('scExtraWindows').innerHTML = parseRanges(spec).map(function (r) {
+                return rangeHtml(r.from, r.to);
+            }).join('');
+        }
+
+        function collectExtraWindows() {
+            return collectRanges(el('scExtraWindows')).join(',');
         }
 
         // ── Konfigurace ──────────────────────────────────────────
@@ -1741,7 +1794,9 @@
                 el('cfgUseHelper').checked = !!config.UseHelper;
                 el('cfgUseWeeklyWindow').checked = !!config.UseWeeklyWindow;
                 renderWeek(config.WeeklyWindow);
+                renderExtraWindows(config.WindowExtraRanges);
                 el('scWeekTable').classList.toggle('hide', !config.UseWeeklyWindow);
+                el('scExtraWindowsBox').classList.toggle('hide', !!config.UseWeeklyWindow);
             });
         }
 
@@ -1762,6 +1817,7 @@
                 config.UseHelper = el('cfgUseHelper').checked;
                 config.UseWeeklyWindow = el('cfgUseWeeklyWindow').checked;
                 config.WeeklyWindow = collectWeek();
+                config.WindowExtraRanges = collectExtraWindows();
                 return ApiClient.updatePluginConfiguration(pluginId, config);
             });
         }
@@ -1910,7 +1966,32 @@
         });
 
         el('cfgUseWeeklyWindow').addEventListener('change', function () {
-            el('scWeekTable').classList.toggle('hide', !el('cfgUseWeeklyWindow').checked);
+            var weekly = el('cfgUseWeeklyWindow').checked;
+            el('scWeekTable').classList.toggle('hide', !weekly);
+            el('scExtraWindowsBox').classList.toggle('hide', weekly);
+        });
+
+        el('scAddExtraWindow').addEventListener('click', function () {
+            el('scExtraWindows').insertAdjacentHTML('beforeend', rangeHtml(22, 3));
+        });
+
+        el('scExtraWindows').addEventListener('click', function (ev) {
+            var del = ev.target.closest('.sc-r-del');
+            if (del) { del.closest('.sc-r').remove(); }
+        });
+
+        el('scWeekTable').addEventListener('click', function (ev) {
+            var add = ev.target.closest('.sc-r-add');
+            if (add) {
+                add.closest('.sc-wd').querySelector('.sc-r-list').insertAdjacentHTML('beforeend', rangeHtml(22, 3));
+                return;
+            }
+            var del = ev.target.closest('.sc-r-del');
+            if (del) {
+                // Den musí mít aspoň jedno okno — „nestahovat" se dělá zaškrtávátkem.
+                var list = del.closest('.sc-r-list');
+                if (list.querySelectorAll('.sc-r').length > 1) { del.closest('.sc-r').remove(); }
+            }
         });
 
         el('scTestLoginBtn').addEventListener('click', function () {

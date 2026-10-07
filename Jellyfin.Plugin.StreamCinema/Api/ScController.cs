@@ -486,6 +486,7 @@ public class ScController : ControllerBase
             WeeklyWindow = cfg.WeeklyWindow,
             WindowFromHour = cfg.WindowFromHour,
             WindowToHour = cfg.WindowToHour,
+            WindowExtraRanges = cfg.WindowExtraRanges,
             StartJitterMinutes = cfg.WindowJitterMinutes,
             EndJitterMinutes = cfg.WindowEndJitterMinutes,
             PauseMinMinutes = cfg.PauseMinMinutes,

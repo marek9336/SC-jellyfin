@@ -20,13 +20,14 @@ public sealed class DownloadWorkerService : BackgroundService
     private readonly ILogger<DownloadWorkerService> _logger;
     private readonly Random _random = new();
 
-    // Den (yyyy-MM-dd), pro který už byl aplikován náhodný rozptyl startu okna.
-    private string? _windowJitterDay;
+    // Začátek okna, pro které už byl použitý náhodný rozptyl startu. Losuje se při
+    // každém otevření okna (ne jen jednou za den) — jinak by druhé, třeba noční okno
+    // začínalo přesně na hodinu.
+    private DateTime? _windowJitterKey;
 
-    // Náhodné zkrácení konce okna — losuje se jednou denně, ať konec stahování
-    // nevypadá jako na povel (viz WindowEndJitterMinutes).
-    private string? _windowEndJitterDay;
-    private int _windowEndJitterMinutes;
+    // Náhodné zkrácení konce okna — každé okno má vlastní los (klíč = začátek okna),
+    // ať dvě okna jednoho dne nekončí se stejným posunem (viz WindowEndJitterMinutes).
+    private readonly Dictionary<DateTime, int> _endJitterByWindow = new();
 
     public DownloadWorkerService(ScState state, ILibraryManager libraryManager, ILogger<DownloadWorkerService> logger)
     {
@@ -107,17 +108,21 @@ public sealed class DownloadWorkerService : BackgroundService
             return;
         }
 
-        // Časové okno — buď jedno globální (From == To → vždy), nebo rozvrh po dnech
-        // v týdnu. Konec okna se navíc denně náhodně zkracuje (WindowEndJitterMinutes).
-        // „Stáhnout teď" okno obchází.
+        // Časová okna — globální (od–do + další okna), nebo rozvrh po dnech v týdnu;
+        // den může mít víc oken (třeba do 16:00 a pak 22:00–3:00). Konec každého okna
+        // se náhodně zkracuje (WindowEndJitterMinutes). „Stáhnout teď" okna obchází.
+        var endJitterMax = cfg.WindowEndJitterMinutes;
+        Func<DateTime, int> endJitter = start => EndJitterFor(start, endJitterMax);
         if (!item.ForceNow && !Schedule.IsOpen(
                 cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour,
-                WindowEndJitter(cfg), DateTime.Now))
+                endJitter, DateTime.Now, cfg.WindowExtraRanges))
         {
             var today = Schedule.Describe(
-                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour, DateTime.Now);
+                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour,
+                DateTime.Now, cfg.WindowExtraRanges);
             var next = Schedule.NextOpen(
-                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour, DateTime.Now);
+                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour,
+                DateTime.Now, cfg.WindowExtraRanges);
             status.LastMessage = next != null
                 ? $"Mimo časové okno ({today}), další okno {next.Value:d.M. H:mm}"
                 : $"Mimo časové okno ({today}), čekám";
@@ -125,16 +130,19 @@ public sealed class DownloadWorkerService : BackgroundService
             return;
         }
 
-        // Rozptyl startu: první denní stahování v okně odložit o náhodných 0–N minut,
-        // ať to nezačíná přesně na začátku okna (anti-ban). „Stáhnout teď" obchází.
+        // Rozptyl startu: první stahování v každém otevřeném okně odložit o náhodných
+        // 0–N minut, ať to nezačíná přesně na začátku okna (anti-ban) — ráno i v noci.
+        // „Stáhnout teď" obchází.
         if (!item.ForceNow
             && (cfg.UseWeeklyWindow || cfg.WindowFromHour != cfg.WindowToHour)
             && cfg.WindowJitterMinutes > 0)
         {
-            var today = DateTime.Now.ToString("yyyy-MM-dd");
-            if (_windowJitterDay != today)
+            var windowStart = Schedule.OpenRangeStart(
+                cfg.UseWeeklyWindow, cfg.WeeklyWindow, cfg.WindowFromHour, cfg.WindowToHour,
+                endJitter, DateTime.Now, cfg.WindowExtraRanges);
+            if (windowStart != null && _windowJitterKey != windowStart)
             {
-                _windowJitterDay = today;
+                _windowJitterKey = windowStart;
                 var jitter = TimeSpan.FromSeconds(_random.Next(0, cfg.WindowJitterMinutes * 60 + 1));
                 if (jitter.TotalSeconds > 5)
                 {
@@ -548,24 +556,29 @@ public sealed class DownloadWorkerService : BackgroundService
     }
 
     /// <summary>
-    /// Kolik minut se dnes ubere z konce okna (losuje se jednou denně).
-    /// Díky tomu nekončí stahování každý den přesně na hodinu.
+    /// Kolik minut se ubere z konce okna, které začíná v `windowStart`. Každé okno má
+    /// vlastní los — stahování tak nekončí přesně na hodinu a dvě okna jednoho dne
+    /// nekončí se stejným posunem. Worker je jednovláknový, slovník nepotřebuje zámek.
     /// </summary>
-    private int WindowEndJitter(Configuration.PluginConfiguration cfg)
+    private int EndJitterFor(DateTime windowStart, int maxMinutes)
     {
-        if (cfg.WindowEndJitterMinutes <= 0)
+        if (maxMinutes <= 0)
         {
             return 0;
         }
 
-        var today = DateTime.Now.ToString("yyyy-MM-dd");
-        if (_windowEndJitterDay != today)
+        if (!_endJitterByWindow.TryGetValue(windowStart, out var minutes))
         {
-            _windowEndJitterDay = today;
-            _windowEndJitterMinutes = _random.Next(0, cfg.WindowEndJitterMinutes + 1);
+            if (_endJitterByWindow.Count > 32)
+            {
+                _endJitterByWindow.Clear(); // staré dny už nikoho nezajímají
+            }
+
+            minutes = _random.Next(0, maxMinutes + 1);
+            _endJitterByWindow[windowStart] = minutes;
         }
 
-        return _windowEndJitterMinutes;
+        return minutes;
     }
 
     private static int Percent(long done, long total) =>

@@ -11,6 +11,9 @@ public sealed class EtaSettings
 
     public int WindowToHour { get; set; }
 
+    /// <summary>Další globální okna ("22-3,12-13"), viz PluginConfiguration.WindowExtraRanges.</summary>
+    public string? WindowExtraRanges { get; set; }
+
     /// <summary>Rozptyl startu okna (min) — v odhadu se počítá polovina (průměr losu).</summary>
     public int StartJitterMinutes { get; set; }
 
@@ -98,9 +101,9 @@ public static class QueueEta
         var capDay = nowLocal.ToUniversalTime().Date;
         var dayBytes = dailyBytesToday;
 
-        // Rozptyl startu se losuje jednou denně u prvního stahování v okně. Když okno
-        // zrovna běží, worker ho má dnes nejspíš za sebou.
-        DateTime? jitterDay = IsOpen(s, endJitter, nowLocal) ? nowLocal.Date : null;
+        // Rozptyl startu se losuje u prvního stahování v každém otevřeném okně (jako
+        // worker). Když okno zrovna běží, worker ho má v tomhle okně nejspíš za sebou.
+        DateTime? jitterWindow = WindowStart(s, endJitter, nowLocal);
 
         var pending = queued.ToList();
         QueueItem? previous = null;
@@ -147,7 +150,8 @@ public static class QueueEta
                 // Časové okno — počkat na nejbližší otevření.
                 for (var w = 0; w < 30 && !IsOpen(s, endJitter, t); w++)
                 {
-                    var open = Schedule.NextOpen(s.UseWeeklyWindow, s.WeeklyWindow, s.WindowFromHour, s.WindowToHour, t);
+                    var open = Schedule.NextOpen(
+                        s.UseWeeklyWindow, s.WeeklyWindow, s.WindowFromHour, s.WindowToHour, t, s.WindowExtraRanges);
                     if (open == null)
                     {
                         break;
@@ -162,10 +166,11 @@ public static class QueueEta
                     break;
                 }
 
-                // Rozptyl startu: jednou denně u prvního stahování (jako worker).
-                if (windowed && jitterDay != t.Date)
+                // Rozptyl startu: u prvního stahování v každém okně (jako worker).
+                var windowStart = WindowStart(s, endJitter, t);
+                if (windowed && windowStart != null && jitterWindow != windowStart)
                 {
-                    jitterDay = t.Date;
+                    jitterWindow = windowStart;
                     t = t.Add(startJitter);
                 }
             }
@@ -211,7 +216,12 @@ public static class QueueEta
     }
 
     private static bool IsOpen(EtaSettings s, int endJitter, DateTime t) =>
-        Schedule.IsOpen(s.UseWeeklyWindow, s.WeeklyWindow, s.WindowFromHour, s.WindowToHour, endJitter, t);
+        Schedule.IsOpen(
+            s.UseWeeklyWindow, s.WeeklyWindow, s.WindowFromHour, s.WindowToHour, endJitter, t, s.WindowExtraRanges);
+
+    private static DateTime? WindowStart(EtaSettings s, int endJitter, DateTime t) =>
+        Schedule.OpenRangeStart(
+            s.UseWeeklyWindow, s.WeeklyWindow, s.WindowFromHour, s.WindowToHour, endJitter, t, s.WindowExtraRanges);
 
     /// <summary>Pauza po staženém souboru — stejná pravidla jako ve workeru, náhoda průměrem.</summary>
     private static TimeSpan PauseAfter(QueueItem done, TimeSpan downloadTime, bool nextIsForced, EtaSettings s)

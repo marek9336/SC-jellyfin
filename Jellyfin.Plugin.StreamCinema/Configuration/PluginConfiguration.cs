@@ -101,13 +101,20 @@ public class PluginConfiguration : BasePluginConfiguration
     public int WindowToHour { get; set; }
 
     /// <summary>
-    /// Náhodný rozptyl startu prvního denního stahování (minuty). Aby nezačínalo přesně
-    /// na začátku okna (podezřelé). První stahování dne se odloží o náhodných 0–N minut.
+    /// Další okna ke globálnímu od–do, např. "22-3" (večer/noc) nebo "22-3,12-13".
+    /// Prázdné = jen jedno okno. Platí, když není zapnutý rozvrh po dnech
+    /// (tam se víc oken zapisuje přímo do dne: "1:8-16,22-3").
+    /// </summary>
+    public string WindowExtraRanges { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Náhodný rozptyl startu okna (minuty). Aby nezačínalo přesně na začátku okna
+    /// (podezřelé): první stahování v každém otevřeném okně se odloží o 0–N minut.
     /// </summary>
     public int WindowJitterMinutes { get; set; } = 15;
 
     /// <summary>
-    /// Náhodné zkrácení konce okna (minuty). Worker si každý den vylosuje 0–N minut
+    /// Náhodné zkrácení konce okna (minuty). Worker si pro každé okno vylosuje 0–N minut
     /// a o tolik dřív přestane pouštět nová stahování — konec pak taky nevypadá
     /// jako naplánovaný stroj. 0 = vypnuto. Na okno „celý den" se neuplatní.
     /// </summary>
