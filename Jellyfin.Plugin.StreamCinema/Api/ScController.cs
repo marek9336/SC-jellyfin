@@ -205,6 +205,8 @@ public class ScController : ControllerBase
                 provider = s.Provider,
                 language = s.Language,
                 languages = s.Languages,
+                audioLangs = s.AudioLangs,
+                subtitleLangs = s.SubtitleLangs,
                 quality = s.Quality,
                 sizeText = s.SizeText,
                 sizeBytes = s.SizeBytes,
@@ -258,6 +260,9 @@ public class ScController : ControllerBase
             SizeText = request.SizeText,
             SizeBytes = request.SizeBytes ?? 0,
             DurationSec = request.DurationSec,
+            AudioLangs = request.AudioLangs,
+            SubtitleLangs = request.SubtitleLangs,
+            AudioInfo = request.AudioInfo,
         };
 
         var outcome = _state.Queue.Add(item);
@@ -335,6 +340,9 @@ public class ScController : ControllerBase
                 SizeText = best.SizeText,
                 SizeBytes = best.SizeBytes ?? 0,
                 DurationSec = best.DurationSec,
+                AudioLangs = best.AudioLangs,
+                SubtitleLangs = best.SubtitleLangs,
+                AudioInfo = best.AudioInfo,
             };
 
             var outcome = _state.Queue.Add(item);
@@ -388,6 +396,11 @@ public class ScController : ControllerBase
                 quality = i.Quality,
                 language = i.Language,
                 sizeText = i.SizeText,
+                durationSec = i.DurationSec,
+                audioLangs = i.AudioLangs,
+                subtitleLangs = i.SubtitleLangs,
+                audioInfo = i.AudioInfo,
+                hasSubsFile = !string.IsNullOrEmpty(i.SubsUrl),
                 status = i.Status.ToString(),
                 forceNow = i.ForceNow,
                 errorMessage = i.ErrorMessage,
@@ -942,4 +955,13 @@ public class AddQueueRequest
     public long? SizeBytes { get; set; }
 
     public int? DurationSec { get; set; }
+
+    /// <summary>Jazyky zvukových stop (dabing) — jen pro zobrazení ve frontě.</summary>
+    public List<string>? AudioLangs { get; set; }
+
+    /// <summary>Ke kterým zvukovým stopám jsou titulky („EN+tit" → „EN").</summary>
+    public List<string>? SubtitleLangs { get; set; }
+
+    /// <summary>Popis zvukových stop z katalogu.</summary>
+    public string? AudioInfo { get; set; }
 }

@@ -59,6 +59,21 @@ public class QueueItem
     public string? SizeText { get; set; }
 
     /// <summary>
+    /// Jazyky zvukových stop (dabing) v pořadí, jak jsou v souboru — „CZ", „SK", „EN".
+    /// null = položka zařazená starší verzí (víme jen <see cref="Language"/>).
+    /// </summary>
+    public List<string>? AudioLangs { get; set; }
+
+    /// <summary>
+    /// Ke kterým zvukovým stopám má soubor titulky (z katalogu „EN+tit" → „EN").
+    /// Prázdné = bez titulků, null = neví se (položka ze starší verze).
+    /// </summary>
+    public List<string>? SubtitleLangs { get; set; }
+
+    /// <summary>Popis zvukových stop z katalogu („[eac3 5.1 CZ], [DD+ Atmos 5.1 EN]") — do bublinky.</summary>
+    public string? AudioInfo { get; set; }
+
+    /// <summary>
     /// Velikost streamu v bajtech (z katalogu). Slouží k porovnání s už staženým
     /// souborem — stejná kvalita + stejná velikost = tentýž soubor, nestahovat znovu.
     /// </summary>
@@ -137,6 +152,19 @@ public class StreamOption
     public long? SizeBytes { get; set; }
     public long? Bitrate { get; set; }
     public List<string> Languages { get; set; } = new();
+
+    /// <summary>
+    /// Jazyky zvukových stop v pořadí v souboru (stream_info.streams), velkými písmeny;
+    /// když katalog stopy neposlal, převezmou se z linfo.
+    /// </summary>
+    public List<string> AudioLangs { get; set; } = new();
+
+    /// <summary>
+    /// Ke kterým zvukovým stopám jsou titulky — katalog je značí „EN+tit" v
+    /// stream_info.langs (= anglický zvuk s titulky). Jazyk titulků samotný neposílá.
+    /// </summary>
+    public List<string> SubtitleLangs { get; set; } = new();
+
     public string? Codec { get; set; }
     public int? Width { get; set; }
     public int? Height { get; set; }

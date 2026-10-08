@@ -276,6 +276,49 @@ public sealed class ScCatalog
                     opt.Height = (int?)GetLong(vid, "height");
                     opt.DurationSec = (int?)GetLong(vid, "duration");
                 }
+
+                // Zvukové stopy: [["eac3", 6, "CZ"], ["DD+ Dolby Atmos", 6, "EN"]] — jazyk je 3. prvek.
+                if (si.TryGetProperty("streams", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var track in tracks.EnumerateArray())
+                    {
+                        if (track.ValueKind == JsonValueKind.Array
+                            && track.GetArrayLength() >= 3
+                            && track[2].ValueKind == JsonValueKind.String
+                            && track[2].GetString() is { Length: > 0 } lang)
+                        {
+                            AddUnique(opt.AudioLangs, lang.ToUpperInvariant());
+                        }
+                    }
+                }
+
+                // Titulky: stream_info.langs = {"CZ": 1, "EN": 1, "EN+tit": 1} — „EN+tit" je
+                // anglický zvuk s titulky (stejnou značku ukazuje Kodi addon jako „+tit").
+                if (si.TryGetProperty("langs", out var langs) && langs.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in langs.EnumerateObject())
+                    {
+                        var plus = prop.Name.IndexOf("+tit", StringComparison.OrdinalIgnoreCase);
+                        if (plus > 0)
+                        {
+                            AddUnique(opt.SubtitleLangs, prop.Name[..plus].Trim().ToUpperInvariant());
+                        }
+                    }
+                }
+            }
+
+            // Bez seznamu stop vzít aspoň linfo (jazyky zvuku bez detailu).
+            if (opt.AudioLangs.Count == 0)
+            {
+                foreach (var lang in opt.Languages)
+                {
+                    AddUnique(opt.AudioLangs, lang.ToUpperInvariant());
+                }
+            }
+
+            if (opt.AudioInfo != null)
+            {
+                opt.AudioInfo = opt.AudioInfo.Trim().TrimStart(',').Trim();   // API posílá „, [eac3 5.1 CZ], …"
             }
 
             // Stream je použitelný, když má resolve URL (běžný tvar) nebo přímý ident (starší tvar)
@@ -390,6 +433,14 @@ public sealed class ScCatalog
         if (!query.Any(q => q.Key == key))
         {
             query.Add(new(key, value));
+        }
+    }
+
+    private static void AddUnique(List<string> list, string value)
+    {
+        if (value.Length > 0 && !list.Contains(value))
+        {
+            list.Add(value);
         }
     }
 

@@ -422,6 +422,9 @@ public sealed class WatcherService : BackgroundService
             SizeText = best.SizeText,
             SizeBytes = best.SizeBytes ?? 0,
             DurationSec = best.DurationSec,
+            AudioLangs = best.AudioLangs,
+            SubtitleLangs = best.SubtitleLangs,
+            AudioInfo = best.AudioInfo,
         };
         return _state.Queue.Add(qi, rank);
     }

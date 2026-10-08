@@ -814,7 +814,8 @@
 
                 var html = '<div style="display:flex; flex-direction:column; gap:.4em;">';
                 data.streams.forEach(function (s, i) {
-                    var langs = (s.languages && s.languages.length) ? s.languages.join(', ').toUpperCase() : (s.language || '?');
+                    var langs = (s.audioLangs && s.audioLangs.length) ? s.audioLangs.join(', ')
+                        : (s.languages && s.languages.length) ? s.languages.join(', ').toUpperCase() : (s.language || '?');
                     var tech = [];
                     if (s.codec) tech.push(s.codec.toUpperCase());
                     if (s.width && s.height) tech.push(s.width + '×' + s.height);
@@ -832,7 +833,11 @@
                         + badges
                         + '<br><span style="opacity:.6; font-size:.85em;">' + esc(tech.join(' · '))
                         + (extra.length ? ' · ' + esc(extra.join(' / ')) : '')
-                        + (s.subsUrl ? ' · 💬 titulky' : '') + '</span></span>'
+                        + (s.durationSec ? ' · ⏱ ' + esc(fmtDuration(s.durationSec)) : '')
+                        + (s.subtitleLangs && s.subtitleLangs.length
+                            ? ' · 💬 titulky k ' + esc(s.subtitleLangs.join(', ')) + (s.subsUrl ? ' + .srt' : '')
+                            : (s.subsUrl ? ' · 💬 titulky (.srt)' : ' · 💬 bez titulků'))
+                        + '</span></span>'
                         + '<button is="emby-button" type="button" class="raised button-submit sc-add-btn" data-i="' + i + '" style="padding:.3em .9em;"><span>Stáhnout</span></button>'
                         + '</div>';
                 });
@@ -857,7 +862,10 @@
                             Language: s.language,
                             SizeText: s.sizeText,
                             SizeBytes: s.sizeBytes || null,
-                            DurationSec: s.durationSec
+                            DurationSec: s.durationSec,
+                            AudioLangs: s.audioLangs || null,
+                            SubtitleLangs: s.subtitleLangs || null,
+                            AudioInfo: s.audioInfo || null
                         };
                         api('POST', 'Queue', body).then(function (r) {
                             // Duplicitu (totéž ve stejné kvalitě už ve frontě) neházíme
@@ -938,6 +946,44 @@
                 + 'staženo ≈ ' + fmtEta(i.etaUtc) + ' (odhad podle pořadí, okna, pauz a rychlosti)';
         }
 
+        // Délka „1 h 49 min" / „43 min".
+        function fmtDuration(sec) {
+            if (!sec || sec <= 0) return '';
+            var m = Math.round(sec / 60);
+            return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min';
+        }
+
+        // Řádek „⏱ délka · 🔊 dabing · 💬 titulky" — ať je hned vidět, jestli je to ten
+        // správný soubor. Katalog značí titulky „EN+tit" (= anglický zvuk s titulky),
+        // jazyk titulků samotný neposílá. Položky ze starších verzí mají jen `language`.
+        function mediaInfo(i) {
+            var audio = i.audioLangs && i.audioLangs.length ? i.audioLangs.slice() : [];
+            var legacySubs = [];
+            if (!audio.length) {
+                String(i.language || '').split(/[,\s]+/).forEach(function (t) {
+                    var m = t.match(/^(.+)\+tit$/i);
+                    var lang = (m ? m[1] : t).toUpperCase();
+                    if (m && legacySubs.indexOf(lang) < 0) legacySubs.push(lang);
+                    if (lang && audio.indexOf(lang) < 0) audio.push(lang);
+                });
+            }
+            var subs = i.subtitleLangs || (legacySubs.length ? legacySubs : null);
+
+            var parts = [];
+            var dur = fmtDuration(i.durationSec);
+            if (dur) parts.push('⏱ ' + dur);
+            if (audio.length) parts.push('🔊 ' + audio.join(', '));
+            if (subs && subs.length) parts.push('💬 titulky k ' + subs.join(', ') + (i.hasSubsFile ? ' + .srt' : ''));
+            else if (i.hasSubsFile || i.subsUrl) parts.push('💬 titulky (.srt)');
+            else if (subs) parts.push('💬 bez titulků');
+            return parts.join(' · ');
+        }
+
+        function mediaInfoTitle(i) {
+            return (i.audioInfo ? 'Zvukové stopy: ' + i.audioInfo + '\n' : '')
+                + '„titulky k EN" = katalog značí EN+tit (anglický zvuk s titulky); jazyk titulků samotný neposílá.';
+        }
+
         // Český tvar slova „díl" podle počtu (1 / 2–4 / 5+).
         function dilWord(n) { return n === 1 ? 'díl' : (n >= 2 && n <= 4 ? 'díly' : 'dílů'); }
 
@@ -1012,6 +1058,8 @@
                     + ' title="Vyber víc položek — přetáhnou se společně" style="width:1.1em; height:1.1em; cursor:pointer;" />' : '')
                 + (canDrag ? '<span class="sc-grip" title="Přetažením změníš pořadí ve frontě" style="opacity:.45; font-size:1.2em; line-height:1; touch-action:none; cursor:grab;">⠿</span>' : '')
                 + '<span>' + esc(itemName(i)) + ' <span style="opacity:.6;">' + esc(i.quality || '') + ' ' + esc(i.sizeText || '') + '</span><br>'
+                + (mediaInfo(i) ? '<span title="' + esc(mediaInfoTitle(i)) + '" style="opacity:.75; font-size:.85em;">'
+                    + esc(mediaInfo(i)) + '</span><br>' : '')
                 + '<span style="color:' + st[1] + '; font-size:.9em;">' + line + '</span></span></span>'
                 + '<span style="display:flex; gap:.4em; flex-wrap:wrap;">' + buttons + '</span></div>';
         }
