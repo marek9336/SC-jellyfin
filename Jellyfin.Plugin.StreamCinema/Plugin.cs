@@ -58,6 +58,13 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             {
                 Name = "streamcinema",
                 EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html",
+
+                // Odkaz v boční liště nástěnky (sekce Zásuvné moduly) — bez proklikávání
+                // přes Pluginy. Jellyfin 10.11 kreslí ikonu jako složku, novější verze
+                // web klienta berou MenuIcon (název ikony Material).
+                DisplayName = "Stream Cinema",
+                EnableInMainMenu = true,
+                MenuIcon = "download",
             },
         ];
     }
