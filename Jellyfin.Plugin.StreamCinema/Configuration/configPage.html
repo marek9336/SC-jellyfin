@@ -946,6 +946,27 @@
                 + 'staženo ≈ ' + fmtEta(i.etaUtc) + ' (odhad podle pořadí, okna, pauz a rychlosti)';
         }
 
+        // Zbývající čas právě stahované položky. Rychlost se mezi obnoveními vyhlazuje
+        // (nová hodnota 30 %), ať odhad neskáče s každým výkyvem linky.
+        var speedAvg = { id: null, bps: 0 };
+        var liveEta = null;   // { id, at: ms } — sdílí stavový pruh i řádek ve frontě
+
+        function liveRemaining(id, done, total, bps) {
+            if (speedAvg.id !== id) { speedAvg = { id: id, bps: 0 }; liveEta = null; }
+            if (bps > 0) { speedAvg.bps = speedAvg.bps > 0 ? speedAvg.bps * 0.7 + bps * 0.3 : bps; }
+            if (!total || done >= total || speedAvg.bps <= 0) return null;
+            var secs = (total - done) / speedAvg.bps;
+            liveEta = { id: id, at: Date.now() + secs * 1000 };
+            return secs;
+        }
+
+        // „méně než minuta" / „~25 min" / „~1 h 20 min".
+        function fmtLeft(secs) {
+            if (secs < 60) return 'méně než minuta';
+            var m = Math.round(secs / 60);
+            return '~' + (m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min');
+        }
+
         // Délka „1 h 49 min" / „43 min".
         function fmtDuration(sec) {
             if (!sec || sec <= 0) return '';
@@ -1022,9 +1043,11 @@
             } else if (stKey === 'Queued' && i.stoppedPercent > 0 && i.bytesDone > 0) {
                 line += ' — naváže od ' + i.stoppedPercent + ' %';
             }
-            if (i.etaUtc && (stKey === 'Queued' || stKey === 'Downloading')) {
+            // U stahované položky stejný čas jako ve stavovém pruhu (vyhlazená rychlost).
+            var eta = stKey === 'Downloading' && liveEta && liveEta.id === i.id ? liveEta.at : i.etaUtc;
+            if (eta && (stKey === 'Queued' || stKey === 'Downloading')) {
                 line += ' · <span title="' + esc(etaTitle(i)) + '" style="color:#cfd8dc;">staženo ≈ '
-                    + esc(fmtEta(i.etaUtc)) + '</span>';
+                    + esc(fmtEta(eta)) + '</span>';
             }
             if (i.errorMessage) { line += ' — ' + esc(i.errorMessage); }
 
@@ -1252,9 +1275,13 @@
                     el('scStatusProgressWrap').classList.add('hide');
                 } else if (s.currentItemTitle) {
                     var pct = s.currentBytesTotal > 0 ? Math.round(100 * s.currentBytesDone / s.currentBytesTotal) : 0;
+                    var left = liveRemaining(s.currentItemId, s.currentBytesDone, s.currentBytesTotal, s.currentSpeedBps);
                     text = '⬇️ Stahuji: <strong>' + esc(s.currentItemTitle) + '</strong> — ' + pct + ' % ('
                         + fmtBytes(s.currentBytesDone) + ' / ' + fmtBytes(s.currentBytesTotal) + ', '
-                        + fmtBytes(s.currentSpeedBps) + '/s)';
+                        + fmtBytes(s.currentSpeedBps) + '/s)'
+                        + (left != null
+                            ? ' · zbývá ' + fmtLeft(left) + ', hotovo ≈ <strong>' + esc(fmtEta(liveEta.at)) + '</strong>'
+                            : '');
                     bar.style.background = '#202020';
                     bar.style.borderLeft = '';
                     el('scStatusProgressWrap').classList.remove('hide');
